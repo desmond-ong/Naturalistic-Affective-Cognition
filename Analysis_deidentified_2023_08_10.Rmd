@@ -1,0 +1,949 @@
+---
+title: "EA Channels Combined Analysis"
+author: "Anonymous (for peer review)"
+date: "10 Aug 2023"
+output:
+  html_document:
+    theme: spacelab
+    toc: yes
+    toc_depth: 3
+    smart: no
+    fig_width: 7
+    fig_height: 5
+    fig_caption: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+editor_options:
+  chunk_output_type: console
+fontsize: 12pt
+---
+
+
+For all studies reported here, we averaged over 2-second long windows. (ML models are fit over 5-second long windows).
+
+```{r preamble, echo=FALSE, warning=FALSE, message=FALSE, eval=TRUE}
+library(tidyverse)
+library(ggplot2)
+library(lme4) # for lmer and associated functions
+library(pander) # for pandoc.table
+
+### PATHS
+train_ids = read.csv("data/models/train_ids.csv")
+dev_ids = read.csv("data/models/dev_ids.csv")
+test_ids = read.csv("data/models/test_ids.csv")
+
+heb_ids = c("ID53_vid2", "ID101_vid2", "ID107_vid4", "ID112_vid4", "ID114_vid4", "ID117_vid4", "ID119_vid5", "ID120_vid8", "ID127_vid4")
+
+NUM_DIGITS_FOR_TEXT_REPORTING = 3
+my_theme <-  theme_bw() + theme(legend.position="top",
+                                strip.background = element_rect(fill="#FFFFFF"), 
+                                strip.text = element_text(size=12), 
+                                axis.text = element_text(size=12),
+                                axis.title.x = element_text(size=14, vjust=-0.2),
+                                axis.title.y = element_text(size=14, vjust=0.8),
+                                legend.text = element_text(size=12),
+                                title = element_text(size=18, vjust=1),
+                                panel.grid = element_blank())
+my_color_palette = c("#8c1515", "#d2c295", "#175e54", "#544948", "#8d3c1e")
+
+
+
+z_to_p <- function(x) {return(2*(1-pnorm(x)))}
+
+format_table <- function(x, digits=4) {return(format(x, digits=digits))}
+
+format_table_2 <- function(x, y, digits=4) { return(paste(x, " (", format_table(x/y*100,digits), "%)", sep=""))}
+
+format_p_value = function(p, digits=3) {
+  if(p>=0.05) { pString = paste( "p = ", format_table(p, digits=digits) , sep="") }
+  else if(p>=0.01) { pString = paste( "<b>p = ", format_table(p, digits=digits) , "*</b>", sep="") }
+  else if(p>=0.001) { pString = paste( "<b>p = ", format_table(p, digits=digits) , "**</b>", sep="") }
+  else { pString = "<b>p < 0.001***</b>" }
+  return(pString)
+}
+
+return_lmer_for_table <- function(lmerObject, coeffName, digits=3) {
+  coeffTableRow = summary(lmerObject)$coeff[coeffName,]
+  b = coeffTableRow['Estimate']
+  t = coeffTableRow['t value']
+  p = coeffTableRow['Pr(>|t|)']
+  pString = format_p_value(p)
+  return( paste("b = ", format_table(b, digits=digits), 
+                ", <br>t = ", format_table(t, digits=digits),
+                " <br>(", pString, ")", sep="") )
+}
+
+
+report_lmer_in_text = function(summary_obj, variable, digits=3, reversed=FALSE) {
+  coeff_row = summary_obj$coefficients[variable,]
+  estimate = unlist(coeff_row[1])
+  se = coeff_row[2]
+  t = coeff_row[3]
+  pval = 2*(1-pnorm(abs(t)))
+  
+  ci = 1.96*se
+  if(!reversed) {
+    text_to_return = paste( "b = ", format(estimate, digits=digits), 
+                          " [", format(estimate-ci, digits=digits), ", ", 
+                          format(estimate+ci, digits=digits), "], ",  
+                          "t = ", format(t, digits=digits), 
+                          ", p = ", format(pval, digits=digits), sep="" )  
+  } else {
+    ## reversed is if the coefficient is A > B, but if you want to consider B > A instead.
+    text_to_return = paste( "b = ", format(-estimate, digits=digits), 
+                          " [", format(-(estimate)-ci, digits=digits), ", ", 
+                          format(-(estimate)+ci, digits=digits), "], ",  
+                          "t = ", format(abs(t), digits=digits), 
+                          ", p = ", format(pval, digits=digits), sep="" )
+  }
+  
+  return(text_to_return)
+}
+
+
+fisher_transform_r_to_z = function(rho) { return( .5 * (log(1+rho) - log(1-rho))) }
+
+```
+
+
+
+```{r read-in-data, message=FALSE, echo=FALSE, eval=TRUE}
+
+# _dAllmelt:    each row contains the rating for each 2s window that participant made for video
+#               (roughly, N participants x 8 videos x )
+#              
+  
+d_study1a_dAllmelt = read.csv('data/study1a_dAllmelt.csv', header=TRUE)
+d_study1a_dAllsum = read.csv('data/study1a_dAllsum.csv', header=TRUE)
+d_study1a_dAllTarget = read.csv('data/study1a_dAllTarget.csv', header=TRUE)
+d_study1a_long = read.csv('data/study1a_long.csv', header=TRUE)
+
+d_study1b_dAllmelt = read.csv('data/study1b_dAllmelt.csv', header=TRUE)
+d_study1b_dAllsum = read.csv('data/study1b_dAllsum.csv', header=TRUE)
+d_study1b_dAllTarget = read.csv('data/study1b_dAllTarget.csv', header=TRUE)
+d_study1b_long = read.csv('data/study1b_long.csv', header=TRUE)
+
+# Study 2
+d_studyHeb_dAllmelt = read.csv('data/studyHeb_dAllmelt.csv', header=TRUE)
+d_studyHeb_dAllsum = read.csv('data/studyHeb_dAllsum.csv', header=TRUE)
+d_studyHeb_dAllTarget = read.csv('data/studyHeb_dAllTarget.csv', header=TRUE)
+d_studyHeb_long = read.csv('data/studyHeb_long.csv', header=TRUE)
+
+# Study 3
+d_studyAmHeb_dAllmelt = read.csv('data/studyAmHeb_dAllmelt.csv', header=TRUE)
+d_studyAmHeb_dAllsum = read.csv('data/studyAmHeb_dAllsum.csv', header=TRUE)
+d_studyAmHeb_dAllTarget = read.csv('data/studyAmHeb_dAllTarget.csv', header=TRUE)
+d_studyAmHeb_long = read.csv('data/studyAmHeb_long.csv', header=TRUE)
+
+
+# machine learning data
+ids_to_read_in = bind_rows(train_ids, dev_ids, test_ids)
+
+modelRatingsAll = data.frame()
+for(videoIterator in c(1:nrow(ids_to_read_in))) { # loop over ids_to_read_in
+  # if(videoIterator %% 10 == 0) {
+  #   cat(paste("Currently on video", videoIterator, "out of", nrow(ids_to_read_in), "...\n"))
+  # }
+  
+  thisVideoID = ids_to_read_in$vid_id[videoIterator]
+
+  resultsFile = read.csv(paste("data/models/target/", thisVideoID, ".csv", sep=""), header=T) %>% 
+    mutate(videoID = thisVideoID, 
+           time = row_number()*5,
+           train = (videoID %in% train_ids$vid_id),
+           valid = (videoID %in% dev_ids$vid_id),
+           test = (videoID %in% test_ids$vid_id))
+  
+  modelRatingsAll = bind_rows(modelRatingsAll, resultsFile)
+}
+
+```
+
+
+```{r combine-all-studies-prep, message=F, echo=F, eval=T}
+# (very-) long-form, one entry per participant and per video
+d_studies_byVideoAndParticipantSummary <- 
+  bind_rows(
+    # Study 1a
+    full_join(d_study1a_dAllmelt, 
+              (d_study1a_dAllTarget %>% rename(targetRating = rating) %>% 
+                 mutate(study="1a")), by=c("videoID", "time")),
+    # Study 1b
+    full_join(d_study1b_dAllmelt, 
+              (d_study1b_dAllTarget %>% rename(targetRating = rating) %>% 
+                 mutate(study="1b")), by=c("videoID", "time")),
+    # Study 2
+    full_join((d_studyHeb_dAllmelt %>% mutate(participantID = as.character(participantID))),
+              (d_studyHeb_dAllTarget %>% rename(targetRating = rating) %>% 
+                 mutate(study="Heb")), by=c("videoID", "time")),
+    # Study 3
+    full_join(d_studyAmHeb_dAllmelt, 
+              (d_studyAmHeb_dAllTarget %>% rename(targetRating = rating) %>% 
+                 mutate(study="Am-Heb")), by=c("videoID", "time"))
+  ) %>%
+  group_by(study, videoID, condition, participantID) %>%
+  summarize(indivCorrelation = cor(rating, targetRating)) %>% ungroup()
+
+
+# long-form, aggregated over participants, so one entry per video
+d_studies_byVideoSummary <- 
+  bind_rows(
+    # Study 1a
+    full_join(d_study1a_dAllmelt, (d_study1a_dAllTarget %>% rename(targetRating = rating) %>% mutate(study="1a")), by=c("videoID", "time")),
+    # Study 1b
+    full_join(d_study1b_dAllmelt, (d_study1b_dAllTarget %>% rename(targetRating = rating) %>% mutate(study="1b")), by=c("videoID", "time")),
+    # Study 2
+    full_join((d_studyHeb_dAllmelt %>% mutate(participantID = as.character(participantID))), 
+              (d_studyHeb_dAllTarget %>% rename(targetRating = rating) %>% mutate(study="Heb")), by=c("videoID", "time")),
+    # Study 3
+    full_join(d_studyAmHeb_dAllmelt, (d_studyAmHeb_dAllTarget %>% rename(targetRating = rating) %>% mutate(study="Am-Heb")), by=c("videoID", "time"))
+  ) %>%
+  #mutate(modelType = "Human") %>% 
+  group_by(study, videoID, condition, participantID) %>%
+  summarize(indivCorrelation = cor(rating, targetRating, use="complete")) %>%
+  group_by(study, videoID, condition) %>%
+  summarize(correlation = mean(indivCorrelation),
+            sdCorrelation = sd(indivCorrelation),
+            N = n()) %>% 
+  mutate(se = sdCorrelation/sqrt(N),
+         ci = qt(0.975, N) * se,
+         ci_upper = correlation + ci,
+         ci_lower = correlation - ci)
+
+# long-form, aggregated over participants and then aggregated over videos, so one entry per study/condition. i.e., condition means, for plotting.
+d_studies_allSummary <- d_studies_byVideoSummary %>% 
+  group_by(study, condition) %>%
+  summarize(meanCorr = mean(correlation),
+            sdCorrelation = sd(correlation),
+            N = n()) %>% 
+  mutate(se = sdCorrelation/sqrt(N),
+         ci_upper = meanCorr + qt(0.975, N) * se,
+         ci_lower = meanCorr - qt(0.975, N) * se)
+```
+
+
+
+
+
+## Study 1a Channels 1
+
+See recruitment statistics from Prep file
+
+#### Text in paper:
+
+> In Study 1a, we had 1,108 American participants watch videos sampled from 193 videos from the Stanford Emotional Narratives Dataset  ...
+
+
+
+```{r study1a-analysis, echo=F}
+s1a_main_lmer_summary =
+  d_studies_byVideoAndParticipantSummary %>% filter(study %in% c("1a")) %>% 
+  mutate(condition = factor(condition, levels=c("both", "audioOnly", "videoOnly"),
+                            labels=c("Both", "Audio-Only", "Video-Only"))) %>%
+  lmer(indivCorrelation ~ condition + (1|participantID) + (1|videoID), data=.) %>%
+  summary()
+
+
+s1a_main_lmer_audioAsBase_summary =
+  d_studies_byVideoAndParticipantSummary %>% filter(study %in% c("1a")) %>% 
+  lmer(indivCorrelation ~ condition + (1|participantID) + (1|videoID), data=.) %>%
+  summary()
+```
+
+Means and SDs of empathic accuracy:
+
+- Mean in Audio-Video condition is:
+    `r format((d_studies_allSummary %>% filter(study %in% c("1a"), condition %in% c("both")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`,
+     (SD across videos = 
+    `r format((d_studies_allSummary %>% filter(study %in% c("1a"), condition %in% c("both")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    )
+- Mean in AudioOnly condition is:
+    `r format((d_studies_allSummary %>% filter(study %in% c("1a"), condition %in% c("audioOnly")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    (SD =
+    `r format((d_studies_allSummary %>% filter(study %in% c("1a"), condition %in% c("audioOnly")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    )
+- Mean in VideoOnly condition is:
+    `r format((d_studies_allSummary %>% filter(study %in% c("1a"), condition %in% c("videoOnly")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    (SD =
+    `r format((d_studies_allSummary %>% filter(study %in% c("1a"), condition %in% c("videoOnly")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    )
+
+
+#### Mixed-effects linear model stats:
+
+> `lmer(accuracy ~ condition + (1|videoID) + (1|participantID))`
+
+- Audio Only > Both, `r report_lmer_in_text(s1a_main_lmer_summary, "conditionAudio-Only")`
+- Video Only > Both, `r report_lmer_in_text(s1a_main_lmer_summary, "conditionVideo-Only")`
+- Video Only > Audio Only, `r report_lmer_in_text(s1a_main_lmer_audioAsBase_summary, "conditionvideoOnly")`
+
+
+
+#### Text in paper:
+
+> We modelled the results with a mixed-effects linear model (in R with `lme4`) with `condition` as a fixed effect and with random effects by `participant`s and `video`s. 
+>
+> Observers' empathic accuracies were highest in the Audio-Video 
+(M$_\text{Audio-Video}$ = `r format((d_studies_allSummary %>% filter(study %in% c("1a"), condition %in% c("both")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`, 
+SD$_\text{Audio-Video}$ = `r format((d_studies_allSummary %>% filter(study %in% c("1a"), condition %in% c("both")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+) and Audio-Only 
+(M$_\text{Audio-Only}$ = `r format((d_studies_allSummary %>% filter(study %in% c("1a"), condition %in% c("audioOnly")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`, 
+SD$_\text{Audio-Only}$ = `r format((d_studies_allSummary %>% filter(study %in% c("1a"), condition %in% c("audioOnly")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+) conditions, with no significant difference between these conditions (p = .18). 
+>
+> These were both significantly higher than the Video-Only condition 
+(M$_\text{Video-Only}$ = `r format((d_studies_allSummary %>% filter(study %in% c("1a"), condition %in% c("videoOnly")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+, SD$_\text{Video-Only}$ = `r format((d_studies_allSummary %>% filter(study %in% c("1a"), condition %in% c("videoOnly")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+; Audio-Video > Video-Only, `r report_lmer_in_text(s1a_main_lmer_summary, "conditionAudio-Only", reversed=TRUE)`; 
+Audio-Only > Video-Only, `r report_lmer_in_text(s1a_main_lmer_audioAsBase_summary, "conditionvideoOnly", reversed=TRUE)`). 
+
+
+## Study 1b Channels replication with subset of 32 videos
+
+See recruitment statistics from Prep file
+
+#### Text in paper:
+
+> We replicated this pattern of results in Study 1b, as an internal replication. Study 1b (N=521) was identical except that the pool of videos was a smaller subset of 32 videos of the original 193, giving us a larger number of ratings per video (approx. 32 ratings/video/condition, compared to approx. 8 ratings/video/condition in Study 1a). 
+
+
+
+
+```{r study1b-analysis, message=FALSE, echo=FALSE, eval=TRUE}
+s1b_main_lmer_summary =
+  d_studies_byVideoAndParticipantSummary %>% filter(study %in% c("1b")) %>% 
+  mutate(condition = factor(condition, levels=c("both", "audioOnly", "videoOnly"),
+                            labels=c("Both", "Audio-Only", "Video-Only"))) %>%
+  lmer(indivCorrelation ~ condition + (1|participantID) + (1|videoID), data=.) %>%
+  summary()
+
+
+s1b_main_lmer_audioAsBase_summary =
+  d_studies_byVideoAndParticipantSummary %>% filter(study %in% c("1b")) %>% 
+  lmer(indivCorrelation ~ condition + (1|participantID) + (1|videoID), data=.) %>%
+  summary()
+```
+
+Means and SDs of empathic accuracy:
+
+- Mean in Audio-Video condition is:
+    `r format((d_studies_allSummary %>% filter(study %in% c("1b"), condition %in% c("both")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`,
+     (SD = 
+    `r format((d_studies_allSummary %>% filter(study %in% c("1b"), condition %in% c("both")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    )
+- Mean in AudioOnly condition is:
+    `r format((d_studies_allSummary %>% filter(study %in% c("1b"), condition %in% c("audioOnly")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    (SD =
+    `r format((d_studies_allSummary %>% filter(study %in% c("1b"), condition %in% c("audioOnly")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    )
+- Mean in VideoOnly condition is:
+    `r format((d_studies_allSummary %>% filter(study %in% c("1b"), condition %in% c("videoOnly")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    (SD =
+    `r format((d_studies_allSummary %>% filter(study %in% c("1b"), condition %in% c("videoOnly")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    )
+
+
+
+#### Mixed-effects linear model stats:
+
+> `lmer(accuracy ~ condition + (1|videoID) + (1|participantID))`
+
+
+- Audio Only > Both, `r report_lmer_in_text(s1b_main_lmer_summary, "conditionAudio-Only")`
+- Video Only > Both, `r report_lmer_in_text(s1b_main_lmer_summary, "conditionVideo-Only")`
+- Video Only > Audio Only, `r report_lmer_in_text(s1b_main_lmer_audioAsBase_summary, "conditionvideoOnly")`
+
+
+
+#### Text in paper:
+
+> In Study 1b, we also found that performance was the highest in the Audio-Video 
+(M$_\text{Audio-Video}$ = `r format((d_studies_allSummary %>% filter(study %in% c("1b"), condition %in% c("both")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`, 
+SD$_\text{Audio-Video}$ = `r format((d_studies_allSummary %>% filter(study %in% c("1b"), condition %in% c("both")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+) and Audio-Only 
+(M$_\text{Audio-Only}$ = `r format((d_studies_allSummary %>% filter(study %in% c("1b"), condition %in% c("audioOnly")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`, 
+SD$_\text{Audio-Only}$ = `r format((d_studies_allSummary %>% filter(study %in% c("1b"), condition %in% c("audioOnly")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+) conditions. These were not significantly different from each other (p = .23), and they were both significantly greater than the Video-Only condition 
+(M$_\text{Video-Only}$ = `r format((d_studies_allSummary %>% filter(study %in% c("1b"), condition %in% c("videoOnly")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+, SD$_\text{Video-Only}$ = `r format((d_studies_allSummary %>% filter(study %in% c("1b"), condition %in% c("videoOnly")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+; Audio-Video > Video-Only, `r report_lmer_in_text(s1b_main_lmer_summary, "conditionVideo-Only", reversed=TRUE)`
+; Audio-Only > Video-Only, `r report_lmer_in_text(s1b_main_lmer_audioAsBase_summary, "conditionvideoOnly", reversed=TRUE)`. 
+
+
+
+## Study 1a+1b
+
+
+```{r cor-study1ab, echo=F, eval=T}
+# to compare corr at video level, use aggregated over participants
+s1b_videoIDs = levels(factor((d_studies_byVideoSummary %>% filter(study %in% c("1b")))$videoID))
+```
+
+
+- Correlation between Study 1a and Study 1b in the Both condition is 
+`r format(cor(
+    (d_studies_byVideoSummary %>% filter(study %in% c("1a"), condition %in% c("both"), videoID %in% s1b_videoIDs) %>% arrange(videoID))$correlation,
+    (d_studies_byVideoSummary %>% filter(study %in% c("1b"), condition %in% c("both")) %>% arrange(videoID))$correlation
+  ),
+  digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+- Correlation between Study 1a and Study 1b in the Audio-Only condition is 
+`r format(cor(
+    (d_studies_byVideoSummary %>% filter(study %in% c("1a"), condition %in% c("audioOnly"), videoID %in% s1b_videoIDs) %>% arrange(videoID))$correlation,
+    (d_studies_byVideoSummary %>% filter(study %in% c("1b"), condition %in% c("audioOnly")) %>% arrange(videoID))$correlation
+  ),
+  digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+- Correlation between Study 1a and Study 1b in the Video-Only condition is 
+`r format(cor(
+    (d_studies_byVideoSummary %>% filter(study %in% c("1a"), condition %in% c("videoOnly"), videoID %in% s1b_videoIDs) %>% arrange(videoID))$correlation,
+    (d_studies_byVideoSummary %>% filter(study %in% c("1b"), condition %in% c("videoOnly")) %>% arrange(videoID))$correlation
+  ),
+  digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+
+
+
+#### Text in paper:
+
+> Across Studies 1a and 1b, average empathic accuracy for each video was highly correlated 
+(r = `r format(
+  cor(
+    (d_studies_byVideoSummary %>% filter(study %in% c("1a"), condition %in% c("both"), videoID %in% s1b_videoIDs) %>% arrange(videoID))$correlation,
+    (d_studies_byVideoSummary %>% filter(study %in% c("1b"), condition %in% c("both")) %>% arrange(videoID))$correlation
+  ),
+  digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+in the Audio-Video condition, 
+r = `r format(
+  cor(
+    (d_studies_byVideoSummary %>% filter(study %in% c("1a"), condition %in% c("audioOnly"), videoID %in% s1b_videoIDs) %>% arrange(videoID))$correlation,
+    (d_studies_byVideoSummary %>% filter(study %in% c("1b"), condition %in% c("audioOnly")) %>% arrange(videoID))$correlation
+  ),
+  digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+in the Audio-Only condition, and 
+r = `r format(
+  cor(
+    (d_studies_byVideoSummary %>% filter(study %in% c("1a"), condition %in% c("videoOnly"), videoID %in% s1b_videoIDs) %>% arrange(videoID))$correlation,
+    (d_studies_byVideoSummary %>% filter(study %in% c("1b"), condition %in% c("videoOnly")) %>% arrange(videoID))$correlation
+  ),
+  digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+in the Video-Only condition), showing evidence for strong video-specific inter-rater reliability—that is, the same video is rated similarly accurately by two groups of observers. This suggests that while individual videos vary across many attributes (i.e., “item-level effects”), and there are individual differences across participants on how accurately they perceive emotions in the videos (i.e., “participant-level effects”), we can be confident that with these sample sizes, our results are reliable after averaging across videos and participants, and that they are not driven by specific videos.
+
+
+```{r Study1ab-plot, fig.width=6, fig.height=5.5, echo=F}
+# For Paper: plot only studies 1a and 1b
+plot1a_df1 = d_studies_allSummary %>% filter(study %in% c("1a", "1b")) %>%
+  mutate(condition = factor(condition, levels=c("both", "audioOnly", "videoOnly"),
+                            labels=c("Audio-Video", "Audio-Only", "Video-Only"))) 
+
+
+plot1a_df2 = d_studies_byVideoSummary %>% filter(study %in% c("1a", "1b")) %>%
+  mutate(condition = factor(condition, levels=c("both", "audioOnly", "videoOnly"),
+                            labels=c("Audio-Video", "Audio-Only", "Video-Only"))) 
+
+
+ggplot(plot1a_df1, aes(x=condition, y=meanCorr, fill=study)) + 
+  geom_bar(stat="identity", position=position_dodge(.9)) +
+  geom_point(data = plot1a_df2, aes(x=condition, fill=study, y = correlation),
+             position=position_jitterdodge(dodge.width= .9, jitter.width=.1), alpha=.2) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width=.2, position=position_dodge(.9), color="black") +
+  xlab("Condition") + ylab("Empathic Accuracy") +
+  scale_fill_manual(breaks=c("1a", "1b"), labels=c("Study 1a", "Study 1b"), values = my_color_palette, name=NULL) +
+  scale_y_continuous(breaks=c(-0.6, -0.4, -0.2, 0, 0.2, 0.4, 0.6, 0.8)) + 
+  coord_cartesian(ylim=c(-0.6,0.9)) +
+  my_theme + theme(
+        legend.text = element_text(size=18),
+        strip.text = element_text(size=16),
+        axis.text = element_text(size=16),
+        axis.title.x = element_text(size=18, vjust=-0.2),
+        axis.title.y = element_text(size=18, vjust=0.8),
+        axis.ticks = element_line(linewidth = 0.4)
+        )
+```
+
+> Figure 2. Behavioral results from Study 1a and 1b, showing direct replication with 193 (Study 1a) and a smaller subset of 32 (Study 1b) videos. Error bars give 95% confidence intervals, with standard errors calculated over videos (rather than over participants). 
+
+
+## Machine Learning modeling on Study 1a+b
+
+### mean performance of multimodal model across training partitions
+
+
+```{r ML-calculate-multimodal-means, message=F, echo=F, eval=T}
+modelRatings_byVideoSummary <- modelRatingsAll %>% 
+  group_by(videoID, train, valid, test) %>%
+  summarize(trimodal = cor(actual, A.V.L),
+            AV = cor(actual, A.V),
+            AL = cor(actual, A.L),
+            VL = cor(actual, V.L),
+            acoustic = cor(actual, A),
+            video = cor(actual, V),
+            ling = cor(actual, L))
+
+modelRatings_byVideoLong <-  modelRatings_byVideoSummary %>% 
+  pivot_longer(cols=!c(videoID, train, valid, test), names_to = "modality", values_to = "correlation")
+
+#summary stats for train/valid
+modelRatings_summary_by_partition = modelRatings_byVideoLong %>% 
+  filter(modality=="trimodal") %>%
+  group_by(train, valid, test) %>% 
+  summarize(meanCorr = mean(correlation),
+            sdCorrelation = sd(correlation),
+            N = n())
+```
+
+
+- Mean performance of the multimodal model on the Training Set is:
+    `r format((modelRatings_summary_by_partition %>% filter(train))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    (SD =
+    `r format((modelRatings_summary_by_partition %>% filter(train))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    )
+- Mean performance of the multimodal model on the Validation Set is:
+    `r format((modelRatings_summary_by_partition %>% filter(valid))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    (SD =
+    `r format((modelRatings_summary_by_partition %>% filter(valid))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    )
+- Mean performance of the multimodal model on the held out Test Set is:
+    `r format((modelRatings_summary_by_partition %>% filter(test))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    (SD =
+    `r format((modelRatings_summary_by_partition %>% filter(test))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    )
+
+
+
+#### Text in paper:
+
+> ... We trained the model as is typical in machine learning, using cross-validation with the SEND dataset split into training, validation, and a held-out test set (using the same partition as in Ong et al., 2021). 
+The model trained on all three modalities learns to predict the emotional valence well, with a high accuracy on the 114 videos in the training set 
+(M$_\text{Audio-Video}$ = `r format((modelRatings_summary_by_partition %>% filter(train))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+, SD$_\text{Audio-Video}$ across videos = `r format((modelRatings_summary_by_partition %>% filter(train))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+), and a moderate accuracy on the 40 videos in the validation set 
+(M$_\text{Audio-Video}$ = `r format((modelRatings_summary_by_partition %>% filter(valid))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+, SD$_\text{Audio-Video}$ = `r format((modelRatings_summary_by_partition %>% filter(valid))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+). On the 39 videos in the held-out test set, which the model did not see during training, the trained multimodal model achieves a performance of 
+`r format((modelRatings_summary_by_partition %>% filter(test))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+(SD$_\text{Audio-Video}$ = `r format((modelRatings_summary_by_partition %>% filter(test))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+), which is a little lower, but not significantly different from, human observers’ performances in Study 1a and 1b.
+
+
+
+
+### mean model performance with different combinations of modalities (on test set only)
+
+
+```{r ML-calculate-means-test-set-only, echo=F, eval=T}
+# this next data frame has mean performance only for the test partition
+modelRatings_testSetSummary <- modelRatings_byVideoLong %>% filter(test) %>%
+  group_by(modality) %>% 
+  summarize(meanCorr = mean(correlation),
+            sdCorrelation = sd(correlation),
+            N = n()) %>% 
+  mutate(study="ML-test") %>%
+  mutate(modality = factor(modality, levels=c("trimodal", "AL", "AV", "VL", "video", "acoustic", "ling")),
+         se = sdCorrelation / sqrt(N),
+         ci_upper = meanCorr + qt(0.975, N) * se,
+         ci_lower = meanCorr - qt(0.975, N) * se)
+
+
+# this next data frame has all train/valid/test
+modelRatings_allSummary <- bind_rows(
+  (modelRatings_byVideoLong %>% group_by(modality) %>% 
+     summarize(meanCorr = mean(correlation),
+               sdCorrelation = sd(correlation),
+               N = n()) %>% 
+      mutate(study="ML-all")),
+  (modelRatings_byVideoLong %>% filter(test) %>%
+      group_by(modality) %>% 
+     summarize(meanCorr = mean(correlation),
+               sdCorrelation = sd(correlation),
+               N = n()) %>% 
+      mutate(study="ML-test"))
+  ) %>%
+  mutate(modality = factor(modality, levels=c("trimodal", "AL", "AV", "VL", "video", "acoustic", "ling")),
+         se = sdCorrelation / sqrt(N),
+         ci_upper = meanCorr + qt(0.975, N) * se,
+         ci_lower = meanCorr - qt(0.975, N) * se)
+  
+
+```
+
+
+- Mean performance of the *Video-Only* model on the Test Set is:
+    `r format((modelRatings_testSetSummary %>% filter(modality=="video"))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    (SD =
+    `r format((modelRatings_testSetSummary %>% filter(modality=="video"))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    )
+- Mean performance of the *Audio-Only* model (linguistic + acoustic) on the Test Set is:
+    `r format((modelRatings_testSetSummary %>% filter(modality=="AL"))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    (SD =
+    `r format((modelRatings_testSetSummary %>% filter(modality=="AL"))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    )
+    
+Separating Audio-Only into Linguistic and Acoustic modalities:
+
+- Mean performance of the *Linguistic-modality-only* model on the Test Set is:
+    `r format((modelRatings_testSetSummary %>% filter(modality=="ling"))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    (SD =
+    `r format((modelRatings_testSetSummary %>% filter(modality=="ling"))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    )
+- Mean performance of the *Acoustic-modality-only* model on the Test Set is:
+    `r format((modelRatings_testSetSummary %>% filter(modality=="acoustic"))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    (SD =
+    `r format((modelRatings_testSetSummary %>% filter(modality=="acoustic"))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    )
+
+
+#### Text in paper:
+
+
+> With this trained model, we then considered how the model would perform given the same combinations of modalities that people saw. That is, we presented the model with only the video modality from the clips in the test-set to mirror Study 1a/b’s “Video-Only” condition, and only the acoustic and linguistic channels to similarly mirror the “Audio-Only” condition. 
+When the model was only given the visual modality, it does very poorly, much like human observers, with a mean performance of `r format((modelRatings_testSetSummary %>% filter(modality=="video"))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+, (SD$_\text{Video-Only}$ = `r format((modelRatings_testSetSummary %>% filter(modality=="video"))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+), which is not different from a correlation of 0, achieved if it was just randomly guessing. By contrast, when given both the acoustic and linguistic channels—the two components of the “Audio-Only” condition—the model achieves a performance of `r format((modelRatings_testSetSummary %>% filter(modality=="AL"))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+(SD$_\text{Audio-Only}$ = `r format((modelRatings_testSetSummary %>% filter(modality=="AL"))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+), which is comparable to its performance when given all three modalities. That is, the model (trained on the target’s self-report) does equally well at predicting the target’s valence when given both the audio and video, as when given only the audio, in a similar pattern to human observers. Finally, although with the study design of Study 1a and 1b, we were unable to separate the contributions of the linguistic and acoustic modalities in the human data, we can do so with the machine learning model: doing so shows that the model does very well when only given the linguistic modality 
+(M$_\text{Linguistics-Only}$ = `r format((modelRatings_testSetSummary %>% filter(modality=="ling"))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+, SD$_\text{Linguistics-Only}$ = `r format((modelRatings_testSetSummary %>% filter(modality=="ling"))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+), but not when given the acoustic modality 
+(M$_\text{Acoustics-Only}$ = `r format((modelRatings_testSetSummary %>% filter(modality=="acoustic"))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+, SD$_\text{Acoustics-Only}$ = `r format((modelRatings_testSetSummary %>% filter(modality=="acoustic"))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+), suggesting that the emotion relevant information is mostly in the semantic content of the target’s story. 
+
+
+
+
+### comparing behavioural data with ML model
+
+
+```{r compare-behavioural-data-with-ML, echo=F}
+comparisonDF_allSummary <- bind_rows(
+  d_studies_allSummary,
+  (modelRatings_allSummary %>% 
+     mutate(condition = factor(modality, 
+                               levels=c("trimodal", "AL", "video", 
+                                        "AV", "VL", "acoustic", "ling"), 
+                               labels=c("both", "audioOnly", "videoOnly", 
+                                        "acousticVideo", "videoLing", "acoustic", "ling"))) %>% 
+     select(-modality))
+) %>% mutate(condition = factor(condition, 
+                                levels=c("both", "audioOnly", "videoOnly",
+                                         "acousticVideo", 
+                                         "videoLing",  
+                                         "acoustic", "ling"),
+                                labels=c("Audio-Video", "Audio-Only", "Video-Only",
+                                         "Acous.+Video",
+                                         "Ling.+Video",  
+                                         "Acoustic", "Linguistics")),
+             study = factor(study, levels=c("1a", "1b", "Heb", "Am-Heb", "ML-all", "ML-test")))
+
+
+modelRatings_byVideoSummaryLong = modelRatings_byVideoSummary  %>% 
+  pivot_longer(cols=!c(videoID, train, valid, test), 
+               names_to = "modality", values_to = "modelCorrelation") %>%
+  mutate(condition = factor(modality, 
+                            levels=c("trimodal", "AL", "video", "AV", "VL", "acoustic", "ling"), 
+                            labels=c("both", "audioOnly", "videoOnly", "acousticVideo", "videoLing", "acoustic", "ling")),
+         videoID = (videoID %>% gsub("ID", "", .) %>% gsub("vid", "", .) ) 
+         ) %>%
+  select(-modality)
+
+comparisonDF_byVideoSummary = full_join(d_studies_byVideoSummary, 
+                                        modelRatings_byVideoSummaryLong, 
+                                        by=c("videoID", "condition"))
+
+human_model_correlations_byVideo = comparisonDF_byVideoSummary %>% 
+  filter(test) %>% 
+  filter(condition %in% c("both", "audioOnly", "videoOnly")) %>% 
+  group_by(condition) %>% summarize(
+    humanModelCorr = (cor.test(correlation, modelCorrelation)$estimate),
+    p.val = (cor.test(correlation, modelCorrelation)$p.value)
+  )
+```
+
+
+
+#### Text in paper
+
+> We also found strong positive correlations (Fig. 3b) between the averaged human empathic accuracy and the model’s “empathic accuracy” (i.e., the correlation of the model’s rating with the target’s self-report), for the held-out test set videos, in the 
+Audio-Video (r = 
+`r format((human_model_correlations_byVideo %>% filter(condition=="both"))$humanModelCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+; p = `r format((human_model_correlations_byVideo %>% filter(condition=="both"))$p.val, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+) and Audio-Only conditions (r = `r format((human_model_correlations_byVideo %>% filter(condition=="audioOnly"))$humanModelCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+; p = `r format((human_model_correlations_byVideo %>% filter(condition=="audioOnly"))$p.val, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+). This means that in these conditions, for videos on which people are more accurate at recovering the target’s affect, the model is too. This correlation was not significant in the Video-Only condition (
+r = `r format((human_model_correlations_byVideo %>% filter(condition=="videoOnly"))$humanModelCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`; p = `r format((human_model_correlations_byVideo %>% filter(condition=="videoOnly"))$p.val, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+). 
+
+
+
+
+### Figure 3
+
+```{r compare-behavioural-data-with-ML-plots-a, warning=F, fig.width=12.5, fig.height=4.5, echo=F}
+### Plot for paper (white background)
+comparisonDF_allSummary %>% filter(study %in% c("1a", "1b", "ML-test")) %>%
+  #filter(condition %in% c("All", "Audio-Only", "Video-Only")) %>%
+  complete(condition = unique(condition)) %>%
+  ggplot(aes(x=condition, y=meanCorr, fill=study)) + 
+  geom_bar(stat="identity", position=position_dodge(width = .9, preserve = "single")) + 
+    geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width=.2, 
+                  position=position_dodge(width = .9, preserve = "single"), color="black") +
+  xlab('Available Modalities') + ylab("Empathic Accuracy") +
+  scale_fill_manual(breaks=c("1a", "1b", "ML-test"), 
+                    labels=c("Study 1a", "Study 1b", "Machine Learning model on held-out test videos"), values = my_color_palette, name=NULL) +
+  scale_y_continuous(breaks=c(0, 0.2, 0.4, 0.6)) + coord_cartesian(ylim=c(-0.15,0.6)) +
+  my_theme + theme(axis.text = element_text(size=16),
+                   axis.title.x = element_text(size=18, vjust=-0.2),
+                   axis.title.y = element_text(size=18, vjust=0.8),
+                   legend.text = element_text(size=16))
+# 12 by 4.5
+```
+
+
+```{r compare-behavioural-data-with-ML-plots-b, message=F, fig.width=12.5, fig.height=4.5, echo=F}
+# Plot for paper: white background
+comparisonDF_byVideoSummary %>% 
+  filter(condition %in% c("both", "audioOnly", "videoOnly"), study %in% c("1a")) %>%
+  mutate(condition = factor(condition, levels=c("both", "audioOnly", "videoOnly"),
+                            labels=c("Audio-Video", "Audio-Only", "Video-Only"))) %>%
+  filter(test) %>%
+  ggplot(aes(x=modelCorrelation, y=correlation)) + geom_point(color="black") + 
+  geom_errorbar(aes(ymax = correlation+se, ymin = correlation-se), width=.2, color="black") +
+  geom_smooth(method="lm") +
+  coord_cartesian(xlim=c(-1,1), ylim=c(-1,1)) +
+  ylab("Mean Human Empathic Accuracy") + xlab('Machine Learning Model "Empathic Accuracy"') +
+  facet_grid(~condition) +  
+  my_theme + theme(
+        strip.text = element_text(size=16),
+        axis.text = element_text(size=16),
+        axis.title.x = element_text(size=16, vjust=-0.2),
+        axis.title.y = element_text(size=16, vjust=0.8),
+        axis.ticks = element_line(linewidth = 0.2),
+        strip.background = element_rect(color = "white", fill = "white")
+        )
+# 12 by 4.5
+```
+
+> Figure 3 Comparison of human and machine learning model average performance, by condition. a) "Audio-Video" includes the machine learning model with all three modalities. "Audio-Only" includes the deep learning model with the Linguistic and Acoustic features. Error bars represent 95% confidence intervals (with standard error calculated over number of videos). b) Scatterplot comparing mean human observers’ empathic accuracy (vertical axis) against the deep learning model’s “empathic accuracy” (horizontal axis), for the Audio-Video (left panel), Audio-Only (middle panel), and Video-Only (right panel) conditions. Each data point is a video from the held-out test set, and 95% confidence interval error bars are provided for the mean human empathic accuracies. There is a significant positive correlation in the Audio-Video condition and in the Audio-Only condition, but no correlation in the Video-Only condition.
+
+
+
+## Study 2 Hebrew-speaking participants watching Hebrew Videos
+
+To add in recruitment statistics from Prep file
+
+#### Text in paper:
+
+> X
+
+
+```{r Study2-analysis, echo=F, eval=T}
+s2_main_lmer_summary =
+  d_studies_byVideoAndParticipantSummary %>% filter(study %in% c("Heb")) %>% 
+  mutate(condition = factor(condition, levels=c("both", "audioOnly", "videoOnly"),
+                            labels=c("Both", "Audio-Only", "Video-Only"))) %>%
+  lmer(indivCorrelation ~ condition + (1|participantID) + (1|videoID), data=.) %>%
+  summary()
+
+
+s2_main_lmer_audioAsBase_summary =
+  d_studies_byVideoAndParticipantSummary %>% filter(study %in% c("Heb")) %>% 
+  lmer(indivCorrelation ~ condition + (1|participantID) + (1|videoID), data=.) %>%
+  summary()
+```
+
+Means and SDs of empathic accuracy:
+
+- Mean in Audio-Video condition is:
+    `r format((d_studies_allSummary %>% filter(study %in% c("Heb"), condition %in% c("both")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`,
+     (SD = 
+    `r format((d_studies_allSummary %>% filter(study %in% c("Heb"), condition %in% c("both")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    )
+- Mean in AudioOnly condition is:
+    `r format((d_studies_allSummary %>% filter(study %in% c("Heb"), condition %in% c("audioOnly")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    (SD =
+    `r format((d_studies_allSummary %>% filter(study %in% c("Heb"), condition %in% c("audioOnly")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    )
+- Mean in VideoOnly condition is:
+    `r format((d_studies_allSummary %>% filter(study %in% c("Heb"), condition %in% c("videoOnly")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    (SD =
+    `r format((d_studies_allSummary %>% filter(study %in% c("Heb"), condition %in% c("videoOnly")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    )
+
+
+#### Mixed-effects linear model stats:
+
+> `lmer(accuracy ~ condition + (1|videoID) + (1|participantID))`
+
+
+- Audio Only > Both, `r report_lmer_in_text(s2_main_lmer_summary, "conditionAudio-Only")`
+- Video Only > Both, `r report_lmer_in_text(s2_main_lmer_summary, "conditionVideo-Only")`
+- Video Only > Audio Only, `r report_lmer_in_text(s2_main_lmer_audioAsBase_summary, "conditionvideoOnly")`
+
+#### Text in paper:
+
+> The pattern of results replicates Study 1a and 1b; observers' empathic accuracies are highest in the Audio-Video 
+(M$_\text{Audio-Video}$ = `r format((d_studies_allSummary %>% filter(study %in% c("Heb"), condition %in% c("both")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`, 
+SD$_\text{Audio-Video}$ = `r format((d_studies_allSummary %>% filter(study %in% c("Heb"), condition %in% c("both")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+) and Audio-Only 
+(M$_\text{Audio-Only}$ = `r format((d_studies_allSummary %>% filter(study %in% c("Heb"), condition %in% c("audioOnly")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`, 
+SD$_\text{Audio-Only}$ = `r format((d_studies_allSummary %>% filter(study %in% c("Heb"), condition %in% c("audioOnly")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+) conditions, and these were not significantly different from each other (p = .95). These performances were significantly higher than the performance in the Video-Only condition 
+(M$_\text{Video-Only}$ = `r format((d_studies_allSummary %>% filter(study %in% c("Heb"), condition %in% c("videoOnly")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+, SD$_\text{Video-Only}$ = `r format((d_studies_allSummary %>% filter(study %in% c("Heb"), condition %in% c("videoOnly")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+; Audio-Video > Video-Only, `r report_lmer_in_text(s2_main_lmer_summary, "conditionVideo-Only", reversed=TRUE)`; 
+Audio-Only > Video-Only, `r report_lmer_in_text(s2_main_lmer_audioAsBase_summary, "conditionvideoOnly", reversed=TRUE)`). 
+
+
+
+
+## Study 3 Americans watching Hebrew Videos
+
+to add in recruitment statistics from Prep file
+
+#### Text in paper:
+
+> In Study 3, we recruited English-speaking Americans (N=170) to watch the Hebrew videos (specifically excluding participants who had familiarity with Hebrew); ...
+
+
+```{r Study3-analysis, echo=F, eval=T}
+s3_main_lmer_summary =
+  d_studies_byVideoAndParticipantSummary %>% filter(study %in% c("Am-Heb")) %>% 
+  mutate(condition = factor(condition, levels=c("both", "audioOnly", "videoOnly"),
+                            labels=c("Both", "Audio-Only", "Video-Only"))) %>%
+  lmer(indivCorrelation ~ condition + (1|participantID) + (1|videoID), data=.) %>%
+  summary()
+
+
+s3_main_lmer_audioAsBase_summary =
+  d_studies_byVideoAndParticipantSummary %>% filter(study %in% c("Am-Heb")) %>% 
+  lmer(indivCorrelation ~ condition + (1|participantID) + (1|videoID), data=.) %>%
+  summary()
+
+s3_main_lmer_videoAsBase_summary =
+  d_studies_byVideoAndParticipantSummary %>% filter(study %in% c("Am-Heb")) %>% 
+  mutate(condition = factor(condition, levels=c("videoOnly", "both", "audioOnly"),
+                            labels=c("Video-Only", "Both", "Audio-Only"))) %>%
+  lmer(indivCorrelation ~ condition + (1|participantID) + (1|videoID), data=.) %>%
+  summary()
+
+```
+
+
+Means and SDs of empathic accuracy:
+
+- Mean in Audio-Video condition is:
+    `r format((d_studies_allSummary %>% filter(study %in% c("Am-Heb"), condition %in% c("both")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`,
+     (SD = 
+    `r format((d_studies_allSummary %>% filter(study %in% c("Am-Heb"), condition %in% c("both")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    )
+- Mean in AudioOnly condition is:
+    `r format((d_studies_allSummary %>% filter(study %in% c("Am-Heb"), condition %in% c("audioOnly")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    (SD =
+    `r format((d_studies_allSummary %>% filter(study %in% c("Am-Heb"), condition %in% c("audioOnly")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    )
+- Mean in VideoOnly condition is:
+    `r format((d_studies_allSummary %>% filter(study %in% c("Am-Heb"), condition %in% c("videoOnly")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    (SD =
+    `r format((d_studies_allSummary %>% filter(study %in% c("Am-Heb"), condition %in% c("videoOnly")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+    )
+
+
+#### Mixed-effects linear model stats:
+
+> `lmer(accuracy ~ condition + (1|videoID) + (1|participantID))`
+
+(Intercepts)
+
+- Both > zero, `r report_lmer_in_text(s3_main_lmer_summary, "(Intercept)")`
+- Audio Only > zero, `r report_lmer_in_text(s3_main_lmer_audioAsBase_summary, "(Intercept)")`
+- Video Only > zero, `r report_lmer_in_text(s3_main_lmer_videoAsBase_summary, "(Intercept)")`
+
+
+(Between conditions)
+
+- Audio Only > Both, `r report_lmer_in_text(s3_main_lmer_summary, "conditionAudio-Only")`
+- Video Only > Both, `r report_lmer_in_text(s3_main_lmer_summary, "conditionVideo-Only")`
+- Video Only > Audio Only, `r report_lmer_in_text(s3_main_lmer_audioAsBase_summary, "conditionvideoOnly")`
+
+
+
+#### Text in paper:
+
+> Now, when participants did not have access to the linguistic information, we observed a different pattern compared to the earlier studies: performance was highest in the Audio-Video 
+(M$_\text{Audio-Video}$ = `r format((d_studies_allSummary %>% filter(study %in% c("Am-Heb"), condition %in% c("both")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`, 
+SD$_\text{Audio-Video}$ = `r format((d_studies_allSummary %>% filter(study %in% c("Am-Heb"), condition %in% c("both")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+) and in the Video-Only condition 
+(M$_\text{Video-Only}$ = `r format((d_studies_allSummary %>% filter(study %in% c("Am-Heb"), condition %in% c("videoOnly")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+, SD$_\text{Video-Only}$ = `r format((d_studies_allSummary %>% filter(study %in% c("Am-Heb"), condition %in% c("videoOnly")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+). These performances were significantly greater than chance (linear mixed-model with fixed-effects of condition: 
+coefficient on Audio-Video, b = 0.198 [0.034, 0.362], t = 2.36, p = .018
+; coefficient on Video-Only, b = 0.191 [0.029, 0.353], t = 2.31, p = .021
+), and not significantly different from each other (p = 0.89). By contrast, performance in the Audio-Only condition 
+(M$_\text{Audio-Only}$ = `r format((d_studies_allSummary %>% filter(study %in% c("Am-Heb"), condition %in% c("audioOnly")))$meanCorr, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`, 
+SD$_\text{Audio-Only}$ = `r format((d_studies_allSummary %>% filter(study %in% c("Am-Heb"), condition %in% c("audioOnly")))$sdCorrelation, digits=NUM_DIGITS_FOR_TEXT_REPORTING)`
+) was the lowest, and it was not significantly greater than chance 
+(b = 0.103 [-0.060, 0.266], t = 1.23, p = 0.217
+). The performance in the former two conditions were greater than in the Audio-Only condition, and these differences were marginally significant 
+(Audio-Video > Audio-Only,  `r report_lmer_in_text(s3_main_lmer_summary, "conditionAudio-Only", reversed=TRUE)`,
+; Video-Only > Audio-Only,  `r report_lmer_in_text(s3_main_lmer_audioAsBase_summary, "conditionvideoOnly")`). 
+
+
+
+
+```{r Study2-3-plots, fig.width=8.5, fig.height=5.5, echo=F, eval=T}
+
+
+# For Paper: plot only studies 1a and 1b
+plot23_df1 = d_studies_allSummary %>% filter(study %in% c("Am-Heb", "Heb")) %>%
+  mutate(study = factor(study, levels=c("Heb", "Am-Heb")),
+         condition = factor(condition, levels=c("both", "audioOnly", "videoOnly"),
+                            labels=c("Audio-Video", "Audio-Only", "Video-Only"))) 
+
+
+plot23_df2 = d_studies_byVideoSummary %>% filter(study %in% c("Am-Heb", "Heb")) %>%
+  mutate(study = factor(study, levels=c("Heb", "Am-Heb")),
+         condition = factor(condition, levels=c("both", "audioOnly", "videoOnly"),
+                            labels=c("Audio-Video", "Audio-Only", "Video-Only"))) 
+
+# For paper: plot only studies Am-Heb and Heb; no ML. [White background]
+ggplot(plot23_df1, aes(x=condition, y=meanCorr, fill=study)) + 
+  geom_bar(stat="identity", position=position_dodge(.9)) +
+  geom_point(data = plot23_df2, aes(x=condition, fill=study, y = correlation),
+             position=position_jitterdodge(dodge.width= .9, jitter.width=.1), alpha=.3) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), 
+                width=.2, position=position_dodge(.9), color="black") +
+  xlab("Condition") + ylab("Empathic Accuracy") +
+  scale_fill_manual(breaks=c("Heb", "Am-Heb"), 
+                    labels=c("S2: Israelis watching Hebrew videos", "S3: Americans watching Hebrew videos"), values = my_color_palette[c(4,5)], name=NULL) +
+  scale_y_continuous(breaks=c(-0.2, 0, 0.2, 0.4, 0.6, 0.8)) + coord_cartesian(ylim=c(-0.30,0.85)) +
+  my_theme + theme(
+    legend.text = element_text(size=14),
+    strip.text = element_text(size=16),
+    axis.text = element_text(size=16),
+    axis.title.x = element_text(size=18, vjust=-0.2),
+    axis.title.y = element_text(size=18, vjust=0.8),
+    axis.ticks = element_line(linewidth = 0.2)
+  )
+## 8.5 by 5.5
+```
+
+> Figure 4. Behavioral results from Study 2 and Study 3. Study 2 shows a direct replication of Studies 1a/1b with a different population and a different video set. But Study 3 shows a different pattern, indicating that people are flexibly adjusting the modalities they use when the informativeness changes. Error bars give 95% confidence intervals, with standard errors calculated over videos (rather than over participants). 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

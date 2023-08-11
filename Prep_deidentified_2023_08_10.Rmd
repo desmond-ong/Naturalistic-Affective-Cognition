@@ -1,0 +1,1577 @@
+---
+title: "EA Channels Combined Analysis (Data Cleaning and Prep)"
+author: "Anonymous (for peer review)"
+date: "10 Aug 2023"
+output:
+  html_document:
+    theme: spacelab
+    toc: yes
+    toc_depth: 3
+    smart: no
+    fig_width: 7
+    fig_height: 5
+    fig_caption: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+editor_options:
+  chunk_output_type: console
+fontsize: 12pt
+---
+
+
+For all studies reported here, we averaged over 2-second long windows.
+
+```{r preamble, echo=FALSE, warning=FALSE, message=FALSE, eval=TRUE}
+library(tidyverse)
+library(ggplot2)
+library(lme4) # for lmer and associated functions
+library(pander) # for pandoc.table
+library(digest) # for the sole purpose of anonymizing participantIDs using the digest function
+
+## study specific variables
+NUMBER_OF_WINDOWS_TO_AVERAGE_OVER = 4 # average over 2s windows
+
+STUDY_1A_COMPREHENSION_PERCENTAGE_EXCLUSION = 80 # drop those below 80%
+STUDY_1B_COMPREHENSION_PERCENTAGE_EXCLUSION = 80 # drop those below 80%
+
+NUM_RATING_CHANGES_PER_MINUTE_EXCLUSION_THRESHOLD = 5 # exclude participants who do less than 5 changes a minute.
+
+### PATHS
+study1a_indivFilename = "raw_data/channels_processed/individuals-parsed-nocomments.csv"
+study1a_datafolder = "raw_data/channels_processed/"
+
+study1b_indivFilename = "raw_data/channels_replication/worker_info.csv"
+study1b_datafolder = "raw_data/channels_replication/"
+
+studyHeb_indivFilename = "raw_data/full_hebrew_data/csv/results-individuals.csv"
+studyHeb_datafolder = "raw_data/full_hebrew_data/new_rating_data/"
+
+studyAmHeb_indivFilename = "raw_data/am-hebrew-data/workers_info/worker_info.csv"
+studyAmHeb_datafolder = "raw_data/am-hebrew-data/"
+
+### VIDEO IDS and CONDITIONS
+
+study1a_videoIDs = 
+  c("111_1", "111_3", "111_4", "112_1", "112_2", "112_3", "113_2", "113_3", "113_4",
+    "113_5", "113_6", "114_1", "114_4", "114_5", "114_6", "115_2", "115_3", "115_5",
+    "115_6", "116_1", "116_2", "116_3", "116_4", "116_5", "116_6", "117_1", "117_2",
+    "117_3", "117_4", "117_5", "117_6", "118_1", "118_3", "118_4", "118_5", "118_6",
+    "119_2", "119_4", "119_6", "120_1", "120_2", "120_3", "120_4", "121_1", "121_3",
+    "121_5", "121_6", "123_1", "123_2", "123_3", "123_4", "123_5", "124_1", "124_2",
+    "124_3", "124_6", "127_2", "127_3", "127_4", "127_5", "127_6", "128_2", "128_5",
+    "128_6", "129_1", "129_2", "129_3", "129_4", "129_5", "129_6", "129_7", "130_1",
+    "130_2", "130_4", "130_6", "131_1", "131_2", "131_3", "131_5", "131_6", "134_1",
+    "134_3", "135_3", "137_1", "137_2", "137_4", "137_5", "137_6", "141_1", "141_6",
+    "142_1", "142_2", "142_3", "143_3", "143_5", "144_1", "144_3", "145_1", "145_2",
+    "145_3", "145_4", "147_1", "147_2", "147_3", "147_4", "147_5", "149_3", "149_6",
+    "151_2", "151_6", "153_1", "153_2", "153_3", "153_4", "153_5", "153_6", "154_1",
+    "154_4", "154_6", "156_1", "156_2", "156_3", "156_6", "161_1", "161_3", "161_4",
+    "162_2", "162_3", "162_4", "162_5", "162_6", "163_1", "163_2", "163_5", "164_3",
+    "164_4", "164_5", "165_1", "165_2", "165_3", "165_4", "165_5", "165_6", "165_7",
+    "167_1", "167_2", "168_1", "169_2", "169_4", "170_2", "170_7", "171_1", "171_2",
+    "171_3", "171_4", "171_5", "171_6", "172_1", "172_2", "172_3", "172_4", "172_5",
+    "173_1", "173_3", "173_4", "173_6", "174_1", "174_2", "174_3", "174_5", "174_6",
+    "174_7", "178_1", "178_2", "178_4", "178_5", "178_6", "179_1", "179_3", "179_4",
+    "179_5", "179_6", "180_1", "180_2", "180_3", "180_4", "180_5", "180_6", "181_1",
+    "181_2", "181_3", "181_4", "181_6")
+study1a_conditionList = c("both", "audioOnly", "videoOnly")
+study1a_NUM_TRIALS = 8
+
+study1b_videoIDs = 
+  c("116_5", "118_3", "119_4", "120_1", "120_4", "121_5", "124_3", "124_6", 
+    "128_2", "129_2", "129_5", "135_3", "137_6", "144_1", "147_2", "147_5", 
+    "151_2", "153_3", "161_3", "164_3", "165_1", "167_2", "169_4", "170_2", 
+    "171_1", "173_4", "173_6", "174_2", "174_3", "178_6", "181_2", "181_4")
+study1b_conditionList = c("both", "audioOnly", "videoOnly")
+study1b_NUM_TRIALS = 8
+
+studyHeb_videoIDs = c("053v2", "101v2", "107v4", "112v4", "114v4", 
+                      "117v4", "119v5", "120v8", "127v4")
+studyHeb_conditionList = c("both", "audioOnly", "videoOnly")
+studyHeb_conditionListActual = c("Full", "AudioOnly", "VideoOnly")
+studyHeb_NUM_TRIALS = 9
+
+studyAmHeb_videoIDs = c("HID53_vid2", "HID101_vid2", "HID107_vid4", "HID112_vid4", "HID114_vid4", 
+                        "HID117_vid4", "HID119_vid5", "HID120_vid8", "HID127_vid4")
+studyAmHeb_conditionList = c("both", "audioOnly", "videoOnly")
+studyAmHeb_NUM_TRIALS = 3
+
+
+
+
+
+
+my_theme <-  theme_bw() + theme(legend.position="top",
+                                strip.background = element_rect(fill="#FFFFFF"), 
+                                strip.text = element_text(size=12), 
+                                axis.text = element_text(size=12),
+                                axis.title.x = element_text(size=14, vjust=-0.2),
+                                axis.title.y = element_text(size=14, vjust=0.8),
+                                legend.text = element_text(size=12),
+                                title = element_text(size=18, vjust=1),
+                                panel.grid = element_blank())
+
+# from https://stackoverflow.com/questions/17288197/reading-a-csv-file-organized-horizontally
+read.csv.TRANSPOSE = function(file, header=TRUE, sep=",", ...) {
+  n = max(count.fields(file, sep=sep), na.rm=TRUE)
+  x = readLines(file)
+  
+  .splitvar = function(x, sep, n) {
+    var = unlist(strsplit(x, split=sep))
+    length(var) = n
+    return(var)
+  }
+  
+  x = do.call(cbind, lapply(x, .splitvar, sep=sep, n=n))
+  x = apply(x, 1, paste, collapse=sep) 
+  out = read.csv(text=x, sep=sep, header=header, ...)
+  return(out)
+}
+
+z_to_p <- function(x) {return(2*(1-pnorm(x)))}
+
+format_table <- function(x, digits=4) {return(format(x, digits=digits))}
+
+format_table_2 <- function(x, y, digits=4) { return(paste(x, " (", format_table(x/y*100,digits), "%)", sep=""))}
+
+format_p_value = function(p) {
+  if(p>=0.05) { pString = paste( "p = ", format_table(p, digits=3) , sep="") }
+  else if(p>=0.01) { pString = paste( "<b>p = ", format_table(p, digits=3) , "*</b>", sep="") }
+  else if(p>=0.001) { pString = paste( "<b>p = ", format_table(p, digits=3) , "**</b>", sep="") }
+  else { pString = "<b>p < 0.001***</b>" }
+  return(pString)
+}
+
+return_lmer_for_table <- function(lmerObject, coeffName) {
+  coeffTableRow = summary(lmerObject)$coeff[coeffName,]
+  b = coeffTableRow['Estimate']
+  t = coeffTableRow['t value']
+  p = coeffTableRow['Pr(>|t|)']
+  pString = format_p_value(p)
+  return( paste("b = ", format_table(b, digits=3), 
+                ", <br>t = ", format_table(t, digits=3),
+                " <br>(", pString, ")", sep="") )
+}
+
+fisher_transform_r_to_z = function(rho) { return( .5 * (log(1+rho) - log(1-rho))) }
+
+```
+
+## Study 1a Channels 1
+
+### Study 1a Description
+
+Participants watched 193 videos in 3 conditions: Audio-Only, Video-Only, or Both Audio and Video. Each participant saw 8 trials (8 videos), and made ratings of how they thought the target felt.
+
+***
+
+
+```{r study1a-read-in-data, message=FALSE, echo=FALSE, eval=TRUE}
+d_study1a_wide = read.csv(study1a_indivFilename, header=TRUE)
+
+d_study1a_wide <- d_study1a_wide %>% rename(participantID = workerid) %>%
+  # the missing comprehension check values, (in the videoOnly conditions) are "null". 
+  # This line is to replace them with NAs and to make these vectors logical vectors (true/false)
+  mutate(
+    comprehensionCheckQ1Correct.1 = as.logical(factor(
+      comprehensionCheckQ1Correct.1, 
+      levels=c("TRUE", "FALSE", "null"), labels=c("TRUE", "FALSE", NA))),
+    comprehensionCheckQ1Correct.2 = as.logical(factor(
+      comprehensionCheckQ1Correct.2,
+      levels=c("TRUE", "FALSE", "null"), labels=c("TRUE", "FALSE", NA))),
+    comprehensionCheckQ1Correct.3 = as.logical(factor(
+      comprehensionCheckQ1Correct.3,
+      levels=c("TRUE", "FALSE", "null"), labels=c("TRUE", "FALSE", NA))),
+    comprehensionCheckQ1Correct.4 = as.logical(factor(
+      comprehensionCheckQ1Correct.4,
+      levels=c("TRUE", "FALSE", "null"), labels=c("TRUE", "FALSE", NA))),
+    comprehensionCheckQ1Correct.5 = as.logical(factor(
+      comprehensionCheckQ1Correct.5,
+      levels=c("TRUE", "FALSE", "null"), labels=c("TRUE", "FALSE", NA))),
+    comprehensionCheckQ1Correct.6 = as.logical(factor(
+      comprehensionCheckQ1Correct.6,
+      levels=c("TRUE", "FALSE", "null"), labels=c("TRUE", "FALSE", NA))),
+    comprehensionCheckQ1Correct.7 = as.logical(factor(
+      comprehensionCheckQ1Correct.7,
+      levels=c("TRUE", "FALSE", "null"), labels=c("TRUE", "FALSE", NA))),
+    comprehensionCheckQ1Correct.8 = as.logical(factor(
+      comprehensionCheckQ1Correct.8,
+      levels=c("TRUE", "FALSE", "null"), labels=c("TRUE", "FALSE", NA))),
+    comprehensionCheckQ2Correct.1 = as.logical(factor(
+      comprehensionCheckQ2Correct.1,
+      levels=c("TRUE", "FALSE", "null"), labels=c("TRUE", "FALSE", NA))),
+    comprehensionCheckQ2Correct.2 = as.logical(factor(
+      comprehensionCheckQ2Correct.2,
+      levels=c("TRUE", "FALSE", "null"), labels=c("TRUE", "FALSE", NA))),
+    comprehensionCheckQ2Correct.3 = as.logical(factor(
+      comprehensionCheckQ2Correct.3,
+      levels=c("TRUE", "FALSE", "null"), labels=c("TRUE", "FALSE", NA))),
+    comprehensionCheckQ2Correct.4 = as.logical(factor(
+      comprehensionCheckQ2Correct.4,
+      levels=c("TRUE", "FALSE", "null"), labels=c("TRUE", "FALSE", NA))),
+    comprehensionCheckQ2Correct.5 = as.logical(factor(
+      comprehensionCheckQ2Correct.5,
+      levels=c("TRUE", "FALSE", "null"), labels=c("TRUE", "FALSE", NA))),
+    comprehensionCheckQ2Correct.6 = as.logical(factor(
+      comprehensionCheckQ2Correct.6,
+      levels=c("TRUE", "FALSE", "null"), labels=c("TRUE", "FALSE", NA))),
+    comprehensionCheckQ2Correct.7 = as.logical(factor(
+      comprehensionCheckQ2Correct.7,
+      levels=c("TRUE", "FALSE", "null"), labels=c("TRUE", "FALSE", NA))),
+    comprehensionCheckQ2Correct.8 = as.logical(factor(
+      comprehensionCheckQ2Correct.8,
+      levels=c("TRUE", "FALSE", "null"), labels=c("TRUE", "FALSE", NA)))
+  ) %>% mutate(
+    # converting the multi-variabled race into a single factor:
+    race = factor(
+      1*(race_AmericanIndian == "AmIndian") + 
+        2*(race_Asian == "Asian") + 
+        4*(race_NativeHawaiian == "NativeHawaiian") + 
+        8*(race_Black == "Black") + 
+        16*(race_White == "White"), 
+      levels=c(16,8,2,1,4,0,
+               5,9,10,11,17,18,20,21,24,25)))
+
+
+levels(d_study1a_wide$race) <- list(
+  White=c(16), Black=c(8), Asian=c(2), "American Indian"=c(1), 
+  "Native Hawaiian"=c(4), "Did Not Report"=c(0),
+  "Multi-racial"=c(5,9,10,11,17,18,20,21,24,25))
+
+# 16 people took it more than once. (13 people took it 2x, 3 people took it 3x). For total 35 duped observations.
+# drop duplicated IDs and those that didn't meet comprehension percentage exclusion
+d_study1a_exclusion = unique(as.character(d_study1a_wide$participantID[duplicated(d_study1a_wide$participantID)]))
+study1a_NUM_EXCLUDED_FOR_REPEATED = length(d_study1a_exclusion)
+```
+
+### Study 1a Recruitment Statistics
+
+- Initial Number of participants recruited: **`r nrow(d_study1a_wide)`** 
+    - **Exclusion Criteria 1** (Participant-Level): Repeat participants. **`r study1a_NUM_EXCLUDED_FOR_REPEATED`** people took it more than once (13 people took it 2x, 3 people took it 3x), for a total of `r length(which(d_study1a_wide$participantID %in% d_study1a_exclusion))` repeat observations.
+    
+Breakdown of responses and comprehension checks, after Exclusion Criteria 1:
+This next table contains the comprehension check question responses per trial, by condition
+
+```{r study1a-comprehension-part1, echo=FALSE, message=FALSE, warning=FALSE, results='as.is', eval=TRUE}
+# EXCLUDING REPEAT PARTICIPANTS
+d_study1a_wide <- d_study1a_wide %>% filter(!(participantID %in% d_study1a_exclusion))
+
+d_study1a_compreCheck = data.frame(
+  participantID = rep(d_study1a_wide$participantID, study1a_NUM_TRIALS),
+  videoID = c(as.character(d_study1a_wide$sequence.1), 
+              as.character(d_study1a_wide$sequence.2),
+              as.character(d_study1a_wide$sequence.3), 
+              as.character(d_study1a_wide$sequence.4),
+              as.character(d_study1a_wide$sequence.5),
+              as.character(d_study1a_wide$sequence.6),
+              as.character(d_study1a_wide$sequence.7),
+              as.character(d_study1a_wide$sequence.8)),
+  order = rep(c(1,2,3,4,5,6,7,8), each=nrow(d_study1a_wide)),
+  comprehensionCheckQ1Correct = c(d_study1a_wide$comprehensionCheckQ1Correct.1,
+                                  d_study1a_wide$comprehensionCheckQ1Correct.2,
+                                  d_study1a_wide$comprehensionCheckQ1Correct.3,
+                                  d_study1a_wide$comprehensionCheckQ1Correct.4,
+                                  d_study1a_wide$comprehensionCheckQ1Correct.5,
+                                  d_study1a_wide$comprehensionCheckQ1Correct.6,
+                                  d_study1a_wide$comprehensionCheckQ1Correct.7,
+                                  d_study1a_wide$comprehensionCheckQ1Correct.8),
+  comprehensionCheckQ2Correct = c(d_study1a_wide$comprehensionCheckQ2Correct.1,
+                                  d_study1a_wide$comprehensionCheckQ2Correct.2,
+                                  d_study1a_wide$comprehensionCheckQ2Correct.3,
+                                  d_study1a_wide$comprehensionCheckQ2Correct.4,
+                                  d_study1a_wide$comprehensionCheckQ2Correct.5,
+                                  d_study1a_wide$comprehensionCheckQ2Correct.6,
+                                  d_study1a_wide$comprehensionCheckQ2Correct.7,
+                                  d_study1a_wide$comprehensionCheckQ2Correct.8))
+d_study1a_compreCheck$condition = NA
+d_study1a_compreCheck$bothComprehensionChecks = 1*(d_study1a_compreCheck$comprehensionCheckQ1Correct=="TRUE") +
+  1*(d_study1a_compreCheck$comprehensionCheckQ2Correct=="TRUE") + 
+  -1*(is.na(d_study1a_compreCheck$comprehensionCheckQ1Correct)) + 
+  -1*(is.na(d_study1a_compreCheck$comprehensionCheckQ2Correct))
+
+for(videoIterator in c(1:length(study1a_videoIDs))) { # loop over study1a_videoIDs
+  thisVideoID = study1a_videoIDs[videoIterator]
+  for(conditionIterator in c(1:length(study1a_conditionList))) {
+    thisCondition = study1a_conditionList[conditionIterator]  
+    filenameToRead = paste(study1a_datafolder, "results_", thisVideoID, "_", thisCondition, ".csv", sep="")
+    thisTemp = read.csv(filenameToRead, header=T)
+    d_study1a_compreCheck$condition[ which(d_study1a_compreCheck$participantID %in% colnames(thisTemp) & d_study1a_compreCheck$videoID == thisVideoID) ] = thisCondition
+  }
+}
+
+study1a_comprehensionTable = table(d_study1a_compreCheck$bothComprehensionChecks,
+                                   d_study1a_compreCheck$condition, useNA = "ifany")
+study1_comprehensionCheckDataFrame = data.frame(
+  AttentionCheck = c("Not Applicable", "0 of 2 correct", 
+                     "1 of 2 correct", "2 of 2 correct", 
+                     "---", "Total Responses"),
+  Both = c("-", 
+           paste(study1a_comprehensionTable["0", "both"], 
+                 " (", 
+                 format(study1a_comprehensionTable["0", "both"] / 
+                          sum(study1a_comprehensionTable[, "both"])*100, digits=2), 
+                 "%)", sep=""), 
+           paste(study1a_comprehensionTable["1", "both"], 
+                 " (", 
+                 format(study1a_comprehensionTable["1", "both"] / 
+                          sum(study1a_comprehensionTable[, "both"])*100, digits=2), 
+                 "%)", sep=""), 
+           paste(study1a_comprehensionTable["2", "both"], 
+                 " (", 
+                 format(study1a_comprehensionTable["2", "both"] / 
+                          sum(study1a_comprehensionTable[, "both"])*100, digits=2), 
+                 "%)", sep=""),
+           "---", sum(study1a_comprehensionTable[, "both"])),
+  AudioOnly = c("-", 
+                paste(study1a_comprehensionTable["0", "audioOnly"], 
+                      " (", 
+                      format(study1a_comprehensionTable["0", "audioOnly"] / 
+                               sum(study1a_comprehensionTable[, "audioOnly"])*100, digits=2), 
+                      "%)", sep=""), 
+                paste(study1a_comprehensionTable["1", "audioOnly"], 
+                      " (", 
+                      format(study1a_comprehensionTable["1", "audioOnly"] / 
+                               sum(study1a_comprehensionTable[, "audioOnly"])*100, digits=2), 
+                      "%)", sep=""), 
+                paste(study1a_comprehensionTable["2", "audioOnly"], 
+                      " (", 
+                      format(study1a_comprehensionTable["2", "audioOnly"] / 
+                               sum(study1a_comprehensionTable[, "audioOnly"])*100, digits=2), 
+                      "%)", sep=""),
+                "---", sum(study1a_comprehensionTable[, "audioOnly"])),
+  VideoOnly = c(paste(study1a_comprehensionTable[4, "videoOnly"], 
+                      " (", paste(format(study1a_comprehensionTable[4, "videoOnly"] / 
+                                           sum(study1a_comprehensionTable[, "videoOnly"])*100, digits=2)), 
+                      "%)", sep=""), 
+                paste(study1a_comprehensionTable["0", "videoOnly"]), 
+                paste(study1a_comprehensionTable["1", "videoOnly"]), 
+                paste(study1a_comprehensionTable["2", "videoOnly"]),
+                "---", sum(study1a_comprehensionTable[, "videoOnly"]))
+)
+
+pander(study1_comprehensionCheckDataFrame)
+```
+
+Next, we sum, for each participant, across the 10 comprehension check questions that they saw:
+
+```{r study1a-comprehension-part2, echo=FALSE, message=FALSE, warning=FALSE, results='as.is', eval=TRUE}
+d_study1a_wide$totalAttentionChecks = 
+  rowSums(d_study1a_wide[, c("comprehensionCheckQ1Correct.1",
+                             "comprehensionCheckQ1Correct.2",
+                             "comprehensionCheckQ1Correct.3",
+                             "comprehensionCheckQ1Correct.4",
+                             "comprehensionCheckQ1Correct.5",
+                             "comprehensionCheckQ1Correct.6",
+                             "comprehensionCheckQ1Correct.7",
+                             "comprehensionCheckQ1Correct.8",
+                             "comprehensionCheckQ2Correct.1",
+                             "comprehensionCheckQ2Correct.2", 
+                             "comprehensionCheckQ2Correct.3",
+                             "comprehensionCheckQ2Correct.4", 
+                             "comprehensionCheckQ2Correct.5", 
+                             "comprehensionCheckQ2Correct.6",
+                             "comprehensionCheckQ2Correct.7", 
+                             "comprehensionCheckQ2Correct.8" )], na.rm=T)
+
+pander(rbind(c("Number of participants", 
+               format(table(d_study1a_wide$totalAttentionChecks), digits=2)),
+             c("Percentage", format(table(d_study1a_wide$totalAttentionChecks)*100 /
+               sum(table(d_study1a_wide$totalAttentionChecks)), digits=2))), split.table=120)
+
+
+
+d_study1a_exclusion = unique(append(
+  as.character(d_study1a_exclusion),
+  as.character(d_study1a_wide$participantID[d_study1a_wide$totalAttentionChecks/10*100 < STUDY_1A_COMPREHENSION_PERCENTAGE_EXCLUSION])  
+  ))
+
+study1a_NUM_EXCLUDED_FOR_ATTENTION = length(d_study1a_exclusion) - study1a_NUM_EXCLUDED_FOR_REPEATED
+study1a_PERCENTAGE_EXCLUDED_FOR_ATTENTION = study1a_NUM_EXCLUDED_FOR_ATTENTION / nrow(d_study1a_wide) * 100
+```
+
+Thus, we see that `r sum(table(d_study1a_wide$totalAttentionChecks)[c("8","9","10")])` (`r format(sum(table(d_study1a_wide$totalAttentionChecks)[c("8","9","10")])/sum(table(d_study1a_wide$totalAttentionChecks))*100, digits=4)`%) participants answered 8 or more attention check questions correct out of 10.   
+    
+    
+- Exclusion Criteria 2 (Participant-Level): **`r study1a_NUM_EXCLUDED_FOR_ATTENTION` (`r format(study1a_PERCENTAGE_EXCLUDED_FOR_ATTENTION, digits=2)`%)** failed to meet `r STUDY_1A_COMPREHENSION_PERCENTAGE_EXCLUSION`% correct on 10 comprehension check questions
+
+   
+```{r study1a-apply-exclusion-critera, message=FALSE, echo=FALSE, eval=TRUE}
+d_study1a_wide <- d_study1a_wide %>% filter(!(participantID %in% d_study1a_exclusion))
+```
+
+
+
+```{r study1a-read-in-EA-ratings, message=FALSE, echo=FALSE, eval=TRUE}
+# This chunk reads in the ratings that participants made while watching the videos.
+
+# initializing the data frames that we will populate
+d_study1a_dAllsum = data.frame()
+d_study1a_dAllmelt = data.frame()
+d_study1a_dAllTarget = data.frame()
+
+keeping_track_of_all_exclusions_1a = data.frame()
+
+### Here, we make a loop to go over all the study1a_videoIDs in order to read the necessary data into the data frames
+
+for(videoIterator in c(1:length(study1a_videoIDs))) { # loop over study1a_videoIDs
+  if(videoIterator %% 10 == 0) {
+    cat(paste("Currently on video", videoIterator, "out of", length(study1a_videoIDs), "...\n"))
+  }
+  
+  thisVideoID = study1a_videoIDs[videoIterator]
+
+  ### -- START: reading in target ratings -- ###
+  targetFilenameToRead = paste(study1a_datafolder, "target/target_", thisVideoID, ".csv", sep="")
+  dTargetFine = read.csv(targetFilenameToRead, header=T) %>% mutate(videoID = thisVideoID)   # this has ratings every 0.5s
+  
+  ### -- START: averaging target ratings over NUMBER_OF_WINDOWS_TO_AVERAGE_OVER -- ###
+  dTargetCoarse = dTargetFine[1:ceiling(nrow(dTargetFine)/NUMBER_OF_WINDOWS_TO_AVERAGE_OVER), ]
+  for(coarseningCounter in c(1:nrow(dTargetCoarse))) {
+    startingIndex = (coarseningCounter-1)*NUMBER_OF_WINDOWS_TO_AVERAGE_OVER +1
+    endingIndex = min(startingIndex+NUMBER_OF_WINDOWS_TO_AVERAGE_OVER-1, nrow(dTargetFine))
+    thisTargetSubset = dTargetFine[startingIndex:endingIndex, ]
+    #dTargetCoarse$time[coarseningCounter] = mean(thisTargetSubset$time, na.rm=T)
+    dTargetCoarse$rating[coarseningCounter] = mean(thisTargetSubset$rating, na.rm=T)
+
+    # This line is to fix the "time" values to nice multiples
+    dTargetCoarse$time[coarseningCounter] = coarseningCounter*NUMBER_OF_WINDOWS_TO_AVERAGE_OVER/2
+  }
+  # we put this rbind below, to make sure the target and observer data have the same times
+  # d_study1a_dAllTarget = rbind(d_study1a_dAllTarget, dTargetCoarse)
+  
+  ### -- END: averaging target ratings over NUMBER_OF_WINDOWS_TO_AVERAGE_OVER -- ###
+  ### -- END: reading in target ratings -- ###
+  
+  ### -- START: reading in observer ratings -- ###
+  
+  for(conditionIterator in c(1:length(study1a_conditionList))) {
+    thisCondition = study1a_conditionList[conditionIterator]  
+  
+    filenameToRead = paste(study1a_datafolder, "results_", thisVideoID, "_", thisCondition, ".csv", sep="")
+    dObserversFine = read.csv(filenameToRead, header=T)
+    colnames(dObserversFine)[1] = "time"
+    dObserversFine = dObserversFine[, !(colnames(dObserversFine) %in% d_study1a_exclusion)]
+    
+    ### -- START: averaging target ratings over NUMBER_OF_WINDOWS_TO_AVERAGE_OVER -- ###
+    dObserversCoarse = dObserversFine[1:(ceiling(nrow(dObserversFine)/NUMBER_OF_WINDOWS_TO_AVERAGE_OVER)),]
+    for(coarseningCounter in c(1:nrow(dObserversCoarse))) {
+      startingIndex = (coarseningCounter-1)*NUMBER_OF_WINDOWS_TO_AVERAGE_OVER +1
+      endingIndex = min(startingIndex+NUMBER_OF_WINDOWS_TO_AVERAGE_OVER-1, nrow(dObserversFine))
+      
+      thisSubset = dObserversFine[startingIndex:endingIndex, ]
+      dObserversCoarse[coarseningCounter,] = colMeans(thisSubset[,], na.rm=T)
+      
+      # This line is to fix the "time" values to nice multiples
+      dObserversCoarse$time[coarseningCounter] = coarseningCounter*(NUMBER_OF_WINDOWS_TO_AVERAGE_OVER/2)
+    }
+    
+    # calculating number of changes, and removing those who make less than 
+    # NUM_RATING_CHANGES_PER_MINUTE_EXCLUSION_THRESHOLD changes per minute
+      numChanges = colSums((dObserversCoarse[2:nrow(dObserversCoarse),] - dObserversCoarse[1:(nrow(dObserversCoarse)-1),])!=0)
+      numChangesPerMinute = numChanges[2:length(numChanges)] / (nrow(dObserversCoarse) * (NUMBER_OF_WINDOWS_TO_AVERAGE_OVER/2) / 60)
+      
+    thisSubsetExclude = names(which(numChangesPerMinute < NUM_RATING_CHANGES_PER_MINUTE_EXCLUSION_THRESHOLD))
+      if(length(thisSubsetExclude)>1) {
+        keeping_track_of_all_exclusions_1a = bind_rows(keeping_track_of_all_exclusions_1a, 
+                                                    data.frame(participantID = thisSubsetExclude,
+                                                               videoID = thisVideoID,
+                                                               condition = thisCondition))    
+      }
+    
+    
+    dObserversCoarse <- dObserversCoarse[,!(colnames(dObserversCoarse) %in% thisSubsetExclude)]
+    
+      
+    dObserversCoarse <- dObserversCoarse %>% mutate(videoID = thisVideoID, condition = thisCondition)
+    
+    dObserversMelt <- dObserversCoarse %>% 
+      pivot_longer(cols = -c(condition, videoID, time), names_to = "participantID", values_to = "rating") %>% arrange(condition, videoID, participantID, time)
+
+    # ensuring that observers and target have the same number of timestamps (i.e., truncating the longer one)
+    if(conditionIterator==1) {
+      thisTimeMax = min(nrow(dObserversCoarse), nrow(dTargetCoarse))
+      dObserversMeltBound = dObserversMelt %>% filter(time <= dTargetCoarse$time[thisTimeMax])
+    } else {
+      thisTimeMax = min(nrow(dObserversCoarse), thisTimeMax)
+      dObserversMeltBound = rbind(dObserversMeltBound, dObserversMelt) %>% 
+        filter(time <= dTargetCoarse$time[thisTimeMax])
+    }
+
+    dTargetCoarse = dTargetCoarse[1:thisTimeMax, ]
+  }
+
+  dObserversSum <- dObserversMeltBound %>% group_by(condition, videoID, time) %>% 
+    summarise(mean_rating = mean(rating, na.rm=T),
+              N = n(),
+              sd = sd(rating, na.rm=T),
+              .groups = 'drop') %>% rename(rating = mean_rating)
+
+  d_study1a_dAllmelt = bind_rows(d_study1a_dAllmelt, dObserversMeltBound)
+  d_study1a_dAllsum = bind_rows(d_study1a_dAllsum, dObserversSum)
+  
+  d_study1a_dAllTarget = bind_rows(d_study1a_dAllTarget, dTargetCoarse)
+}
+
+
+cat(paste("With a threshold of ", NUM_RATING_CHANGES_PER_MINUTE_EXCLUSION_THRESHOLD, " changes per minute,\n"))
+
+cat(paste("Discarded ", nrow(keeping_track_of_all_exclusions_1a), " trials from ", length(unique(keeping_track_of_all_exclusions_1a$participantID)), " participants...\n"))
+
+cat(paste("Dataset has ", length(unique(d_study1a_dAllmelt$participantID)), " participants remaining, from ", length(unique(d_study1a_wide$participantID)), " participants...\n"))
+
+
+
+# anonymizing. have to do it here because comprehension check data is in a separate file that still needs original participantIDs, and because the individual rating files also have the participantIDs
+d_study1a_wide <- d_study1a_wide %>%
+  # anonymizing the participantID by using an MD5 hash function, and taking first 8 chars
+  rowwise() %>% mutate(
+    participantID = substr(digest(participantID, algo="md5", serialize=F), 1, 8)
+  ) %>% ungroup()
+
+d_study1a_dAllmelt <- d_study1a_dAllmelt %>%
+  # anonymizing the participantID by using an MD5 hash function, and taking first 8 chars
+  rowwise() %>% mutate(
+    participantID = substr(digest(participantID, algo="md5", serialize=F), 1, 8)
+  ) %>% ungroup()
+
+write.csv(d_study1a_dAllmelt, "data/study1a_dAllmelt.csv", row.names=F)
+write.csv(d_study1a_dAllsum, "data/study1a_dAllsum.csv", row.names=F)
+write.csv(d_study1a_dAllTarget, "data/study1a_dAllTarget.csv", row.names=F)
+```
+
+
+
+```{r study1a-calculate-empathic-accuracy, echo=FALSE, warning=FALSE, eval=TRUE}
+# This chunk calculates empathic accuracy
+d_study1a_long = data.frame(
+  participantID = as.character(rep(d_study1a_wide$participantID, study1a_NUM_TRIALS)),
+  videoID = c(as.character(d_study1a_wide$sequence.1), 
+              as.character(d_study1a_wide$sequence.2),
+              as.character(d_study1a_wide$sequence.3), 
+              as.character(d_study1a_wide$sequence.4),
+              as.character(d_study1a_wide$sequence.5),
+              as.character(d_study1a_wide$sequence.6),
+              as.character(d_study1a_wide$sequence.7),
+              as.character(d_study1a_wide$sequence.8)),
+  order = rep(c(1,2,3,4,5,6,7,8), each=nrow(d_study1a_wide)),
+  comprehensionCheckQ1Correct = c(d_study1a_wide$comprehensionCheckQ1Correct.1,
+                                  d_study1a_wide$comprehensionCheckQ1Correct.2,
+                                  d_study1a_wide$comprehensionCheckQ1Correct.3,
+                                  d_study1a_wide$comprehensionCheckQ1Correct.4,
+                                  d_study1a_wide$comprehensionCheckQ1Correct.5,
+                                  d_study1a_wide$comprehensionCheckQ1Correct.6,
+                                  d_study1a_wide$comprehensionCheckQ1Correct.7,
+                                  d_study1a_wide$comprehensionCheckQ1Correct.8),
+  comprehensionCheckQ2Correct = c(d_study1a_wide$comprehensionCheckQ2Correct.1,
+                                  d_study1a_wide$comprehensionCheckQ2Correct.2,
+                                  d_study1a_wide$comprehensionCheckQ2Correct.3,
+                                  d_study1a_wide$comprehensionCheckQ2Correct.4,
+                                  d_study1a_wide$comprehensionCheckQ2Correct.5,
+                                  d_study1a_wide$comprehensionCheckQ2Correct.6,
+                                  d_study1a_wide$comprehensionCheckQ2Correct.7,
+                                  d_study1a_wide$comprehensionCheckQ2Correct.8),
+  
+  # individual difference variables
+  IRI_EC = rep(d_study1a_wide$IRI_EC, study1a_NUM_TRIALS),
+  IRI_PT = rep(d_study1a_wide$IRI_PT, study1a_NUM_TRIALS),
+  IRI_PD = rep(d_study1a_wide$IRI_PD, study1a_NUM_TRIALS),
+  BDI = rep(d_study1a_wide$BDI, study1a_NUM_TRIALS),
+  LT_Empathy = rep(d_study1a_wide$LT_Empathy, study1a_NUM_TRIALS),
+  HPS = rep(d_study1a_wide$HPS, study1a_NUM_TRIALS),
+  gender = rep(d_study1a_wide$gender, study1a_NUM_TRIALS),
+  age = rep(d_study1a_wide$age, study1a_NUM_TRIALS),
+  
+  # post-video ratings
+  # How intense was the event described in the video?
+  # 1 (very low intensity) - 7 (very high intensity)
+  postVideoIntensity = c(d_study1a_wide$postVideoIntensity.1,
+                         d_study1a_wide$postVideoIntensity.2,
+                         d_study1a_wide$postVideoIntensity.3,
+                         d_study1a_wide$postVideoIntensity.4,
+                         d_study1a_wide$postVideoIntensity.5,
+                         d_study1a_wide$postVideoIntensity.6,
+                         d_study1a_wide$postVideoIntensity.7,
+                         d_study1a_wide$postVideoIntensity.8),
+  
+  # How positive was the emotional content in the video?
+  # 1-7
+  postVideoPositivity = c(d_study1a_wide$postVideoPositivity.1,
+                          d_study1a_wide$postVideoPositivity.2,
+                          d_study1a_wide$postVideoPositivity.3,
+                          d_study1a_wide$postVideoPositivity.4,
+                          d_study1a_wide$postVideoPositivity.5,
+                          d_study1a_wide$postVideoPositivity.6,
+                          d_study1a_wide$postVideoPositivity.7,
+                          d_study1a_wide$postVideoPositivity.8),
+  
+  # How negative was the emotional content in the video?
+  # 1-7
+  postVideoNegativity = c(d_study1a_wide$postVideoNegativity.1,
+                          d_study1a_wide$postVideoNegativity.2,
+                          d_study1a_wide$postVideoNegativity.3,
+                          d_study1a_wide$postVideoNegativity.4,
+                          d_study1a_wide$postVideoNegativity.5,
+                          d_study1a_wide$postVideoNegativity.6,
+                          d_study1a_wide$postVideoNegativity.7,
+                          d_study1a_wide$postVideoNegativity.8),
+  
+  # Over the course of the video, how many emotions did the person display?
+  # 1 : None
+  # 2 : One
+  # 3 : Two
+  # 4 : Several
+  # 5 : Many
+  postVideoEmoDiversity = c(d_study1a_wide$postVideoEmoDiversity.1,
+                            d_study1a_wide$postVideoEmoDiversity.2,
+                            d_study1a_wide$postVideoEmoDiversity.3,
+                            d_study1a_wide$postVideoEmoDiversity.4,
+                            d_study1a_wide$postVideoEmoDiversity.5,
+                            d_study1a_wide$postVideoEmoDiversity.6,
+                            d_study1a_wide$postVideoEmoDiversity.7,
+                            d_study1a_wide$postVideoEmoDiversity.8),
+  
+  # How depressed do you think this person was in the 2 weeks before recording the video?
+  # 1 (not at all depressed) - 7 (very depressed)
+  postVideoDepression = c(d_study1a_wide$postVideoDepression.1,
+                          d_study1a_wide$postVideoDepression.2,
+                          d_study1a_wide$postVideoDepression.3,
+                          d_study1a_wide$postVideoDepression.4,
+                          d_study1a_wide$postVideoDepression.5,
+                          d_study1a_wide$postVideoDepression.6,
+                          d_study1a_wide$postVideoDepression.7,
+                          d_study1a_wide$postVideoDepression.8),
+  
+  condition = NA,
+  # dependent variables to be calculated
+  accuracy = NA,
+  observerMeanRating = NA,
+  targetMeanRating = NA,
+  numRatingChanges = NA,
+  numRatingChangesPerMinute = NA
+  )
+
+
+for(thisRow in c(1:nrow(d_study1a_long))) {
+  if(thisRow %% 100 == 0) {
+    cat(paste("currently on row", thisRow, "out of", nrow(d_study1a_long), "...\n"))
+  }
+    thisParticipantID = d_study1a_long$participantID[thisRow]
+    thisVideoID       = d_study1a_long$videoID[thisRow]
+    
+    thisSubset = d_study1a_dAllmelt %>% filter(
+      participantID==thisParticipantID,
+      videoID==thisVideoID)
+    thisTargetSubset = d_study1a_dAllTarget %>% filter(videoID==thisVideoID)
+    
+    d_study1a_long$condition[thisRow] = thisSubset$condition[1]
+    
+    if(length(thisSubset$rating)>0) {
+      # actually calculating the measures
+      d_study1a_long$accuracy[thisRow] = cor(thisTargetSubset$rating, thisSubset$rating, use="complete")
+      d_study1a_long$observerMeanRating[thisRow] = mean(thisSubset$rating, na.rm=T)
+      d_study1a_long$targetMeanRating[thisRow] = mean(thisTargetSubset$rating, na.rm=T)
+      
+      d_study1a_long$numRatingChanges[thisRow] =
+        sum(((thisSubset$rating[2:length(thisSubset$rating)] -
+                thisSubset$rating[1:length(thisSubset$rating)-1])
+             !=0))
+      # original sampling rate = 2 Hz, so 2 windows per second, and 160 windows per minute, but is averaged using NUMBER_OF_WINDOWS_TO_AVERAGE_OVER
+      # thus, each data point is: (NUMBER_OF_WINDOWS_TO_AVERAGE_OVER/2) seconds
+      # total length of video is: length(thisSubset$rating) * (NUMBER_OF_WINDOWS_TO_AVERAGE_OVER/2) seconds
+      # or: length(thisSubset$rating) * (NUMBER_OF_WINDOWS_TO_AVERAGE_OVER/2) / 60 minutes
+      # Thus, avg number of rating changes per minute = numRatingChanges / length_in_minutes
+      d_study1a_long$numRatingChangesPerMinute[thisRow] = 
+        d_study1a_long$numRatingChanges[thisRow] / (length(thisSubset$rating) * (NUMBER_OF_WINDOWS_TO_AVERAGE_OVER/2) / 60)
+    }
+}
+
+d_study1a_long = d_study1a_long %>% filter(!is.na(accuracy))
+
+write.csv(d_study1a_long, "data/study1a_long.csv", row.names=FALSE)
+```
+
+
+- Final Number of participants: **`r nrow(d_study1a_wide)`**
+- Number of trials: `r study1a_NUM_TRIALS`
+- Number of videos: `r length(study1a_videoIDs)` videos x `r length(study1a_conditionList)` conditions: `r study1a_conditionList`
+- Age: Mean = `r format(mean(d_study1a_wide$age, na.rm=T), digits=3)`, SD = `r format(sd(d_study1a_wide$age, na.rm=T), digits=3)`
+- Gender: 
+`r pander(table(d_study1a_wide$gender))`
+- Race:
+`r pander(table(d_study1a_wide$race), split.table=120)`
+
+
+
+
+
+
+## Study 1b Channels 2
+
+### Study 1b Description
+
+Study 1b was a replication of Study 1a, with fewer videos (32 videos) and larger N per video. 
+
+***
+
+```{r study1b-read-in-data, message=FALSE, echo=FALSE, eval=TRUE}
+d_study1b_wide = read.csv(study1b_indivFilename, header=TRUE) %>%
+  rename(participantID = worker_id) %>%
+  mutate(sequence.1 = NA, sequence.2 = NA, sequence.3 = NA, sequence.4 = NA,
+         sequence.5 = NA, sequence.6 = NA, sequence.7 = NA, sequence.8 = NA) 
+
+d_study1b_wide[,c("sequence.1", "sequence.2", "sequence.3", "sequence.4", "sequence.5", "sequence.6", "sequence.7", "sequence.8")] <-
+  do.call(rbind, lapply(strsplit(as.character(d_study1b_wide$videoClips), ','), 
+                        function(x) {return(gsub("\\[| \\'|\\'|\\]", "" , 
+                                                 gsub('\\_crop|\\_downsized\\.mp4|ID|vid', '', x)))}
+  ))
+
+d_study1b_wide$comprehensionCheckQ1Correct.1 = NA; d_study1b_wide$comprehensionCheckQ2Correct.1 = NA
+d_study1b_wide$comprehensionCheckQ1Correct.2 = NA; d_study1b_wide$comprehensionCheckQ2Correct.2 = NA
+d_study1b_wide$comprehensionCheckQ1Correct.3 = NA; d_study1b_wide$comprehensionCheckQ2Correct.3 = NA
+d_study1b_wide$comprehensionCheckQ1Correct.4 = NA; d_study1b_wide$comprehensionCheckQ2Correct.4 = NA
+d_study1b_wide$comprehensionCheckQ1Correct.5 = NA; d_study1b_wide$comprehensionCheckQ2Correct.5 = NA
+d_study1b_wide$comprehensionCheckQ1Correct.6 = NA; d_study1b_wide$comprehensionCheckQ2Correct.6 = NA
+d_study1b_wide$comprehensionCheckQ1Correct.7 = NA; d_study1b_wide$comprehensionCheckQ2Correct.7 = NA
+d_study1b_wide$comprehensionCheckQ1Correct.8 = NA; d_study1b_wide$comprehensionCheckQ2Correct.8 = NA
+
+d_study1b_wide$condition.1 = NA; d_study1b_wide$condition.2 = NA
+d_study1b_wide$condition.3 = NA; d_study1b_wide$condition.4 = NA
+d_study1b_wide$condition.5 = NA; d_study1b_wide$condition.6 = NA
+d_study1b_wide$condition.7 = NA; d_study1b_wide$condition.8 = NA
+
+#cat("Study1b: Calculating comprehension checks...\n")
+for(videoIterator in c(1:length(study1b_videoIDs))) { # loop over videoIDs
+  thisVideoID = study1b_videoIDs[videoIterator]
+  for(conditionIterator in c(1:length(study1b_conditionList))) {
+    thisCondition = study1b_conditionList[conditionIterator]
+    # adding in comprehension checks
+    filenameToRead = paste(study1b_datafolder, "comp_result/ID", 
+                           substr(thisVideoID, 1, 3), "_vid", substr(thisVideoID, 5, 5), 
+                           "_crop_downsized_", thisCondition, ".csv", sep="")
+    if(!file.exists(filenameToRead)) {
+      filenameToRead = gsub('\\_crop', '', filenameToRead)
+    }
+    dCompreCheck = read.csv(filenameToRead, header=T)
+    dCompreCheck$worker_id = gsub('\\"', '', as.character(dCompreCheck$worker_id))
+    for(thisRow in c(1:nrow(d_study1b_wide))) {
+      thisParticipantID = d_study1b_wide$participantID[thisRow]
+      if(thisParticipantID %in% dCompreCheck$worker_id) {
+        whichQ = which(c(d_study1b_wide$sequence.1[thisRow]==thisVideoID,
+                         d_study1b_wide$sequence.2[thisRow]==thisVideoID,
+                         d_study1b_wide$sequence.3[thisRow]==thisVideoID,
+                         d_study1b_wide$sequence.4[thisRow]==thisVideoID,
+                         d_study1b_wide$sequence.5[thisRow]==thisVideoID,
+                         d_study1b_wide$sequence.6[thisRow]==thisVideoID,
+                         d_study1b_wide$sequence.7[thisRow]==thisVideoID,
+                         d_study1b_wide$sequence.8[thisRow]==thisVideoID))
+        if(length(whichQ)>0) {
+          whichCompreCheckRow = which(dCompreCheck$worker_id == thisParticipantID)
+          eval(parse(text=paste( "d_study1b_wide$comprehensionCheckQ1Correct.", as.character(whichQ), "[thisRow]= (as.character(dCompreCheck$Q1.Responce[whichCompreCheckRow]) == as.character(dCompreCheck$Q1.AnswerKey[whichCompreCheckRow]))", sep="")))
+          eval(parse(text=paste( "d_study1b_wide$comprehensionCheckQ2Correct.", as.character(whichQ), "[thisRow]= (as.character(dCompreCheck$Q2.Responce[whichCompreCheckRow]) == as.character(dCompreCheck$Q2.AnswerKey[whichCompreCheckRow]))", sep=""))) 
+          eval(parse(text=paste( "d_study1b_wide$condition.", as.character(whichQ), "[thisRow]=thisCondition", sep=""))) 
+        }
+      }
+    }
+  }
+}
+
+# 28 people took it twice for 56 observations.
+# drop duplicated IDs 
+d_study1b_exclusion = unique(as.character(d_study1b_wide$participantID[duplicated(d_study1b_wide$participantID)]))
+study1b_NUM_EXCLUDED_FOR_REPEATED = length(d_study1b_exclusion)
+```
+
+### Study 1b Recruitment Statistics
+
+- Initial Number of participants recruited: **`r nrow(d_study1b_wide)`** 
+    - **Exclusion Criteria 1**: Repeat participants. **`r study1b_NUM_EXCLUDED_FOR_REPEATED`** people took it twice for a total of `r length(which(d_study1b_wide$participantID %in% d_study1b_exclusion))` repeat observations.
+    
+Breakdown of responses and comprehension checks, after Exclusion Criteria 1:
+This next table contains the comprehension check question responses per trial, by condition
+
+```{r study1b-comprehension-part1, echo=FALSE, warning=FALSE, results='as.is', eval=TRUE}
+# EXCLUDING REPEAT PARTICIPANTS
+d_study1b_wide <- d_study1b_wide %>% filter(!(participantID %in% d_study1b_exclusion))
+
+d_study1b_compreCheck = data.frame(
+  participantID = rep(d_study1b_wide$participantID, study1b_NUM_TRIALS),
+  videoID = c(as.character(d_study1b_wide$sequence.1), 
+              as.character(d_study1b_wide$sequence.2),
+              as.character(d_study1b_wide$sequence.3), 
+              as.character(d_study1b_wide$sequence.4),
+              as.character(d_study1b_wide$sequence.5),
+              as.character(d_study1b_wide$sequence.6),
+              as.character(d_study1b_wide$sequence.7),
+              as.character(d_study1b_wide$sequence.8)),
+  order = rep(c(1,2,3,4,5,6,7,8), each=nrow(d_study1b_wide)),
+  condition = c(as.character(d_study1b_wide$condition.1), 
+                as.character(d_study1b_wide$condition.2),
+                as.character(d_study1b_wide$condition.3), 
+                as.character(d_study1b_wide$condition.4),
+                as.character(d_study1b_wide$condition.5),
+                as.character(d_study1b_wide$condition.6),
+                as.character(d_study1b_wide$condition.7),
+                as.character(d_study1b_wide$condition.8)),
+  comprehensionCheckQ1Correct = c(d_study1b_wide$comprehensionCheckQ1Correct.1,
+                                  d_study1b_wide$comprehensionCheckQ1Correct.2,
+                                  d_study1b_wide$comprehensionCheckQ1Correct.3,
+                                  d_study1b_wide$comprehensionCheckQ1Correct.4,
+                                  d_study1b_wide$comprehensionCheckQ1Correct.5,
+                                  d_study1b_wide$comprehensionCheckQ1Correct.6,
+                                  d_study1b_wide$comprehensionCheckQ1Correct.7,
+                                  d_study1b_wide$comprehensionCheckQ1Correct.8),
+  comprehensionCheckQ2Correct = c(d_study1b_wide$comprehensionCheckQ2Correct.1,
+                                  d_study1b_wide$comprehensionCheckQ2Correct.2,
+                                  d_study1b_wide$comprehensionCheckQ2Correct.3,
+                                  d_study1b_wide$comprehensionCheckQ2Correct.4,
+                                  d_study1b_wide$comprehensionCheckQ2Correct.5,
+                                  d_study1b_wide$comprehensionCheckQ2Correct.6,
+                                  d_study1b_wide$comprehensionCheckQ2Correct.7,
+                                  d_study1b_wide$comprehensionCheckQ2Correct.8))
+
+d_study1b_compreCheck$bothComprehensionChecks = 1*(d_study1b_compreCheck$comprehensionCheckQ1Correct=="TRUE") +
+  1*(d_study1b_compreCheck$comprehensionCheckQ2Correct=="TRUE")
+d_study1b_compreCheck$bothComprehensionChecks[is.na(d_study1b_compreCheck$bothComprehensionChecks)] = -2
+
+study1b_comprehensionTable = table(d_study1b_compreCheck$bothComprehensionChecks, d_study1b_compreCheck$condition)
+study1b_comprehensionCheckDataFrame = data.frame(
+  AttentionCheck = c("Not Applicable", "0 of 2 correct", "1 of 2 correct", "2 of 2 correct", 
+                     "---", "Total Responses"),
+  Both = c("-", 
+           paste(study1b_comprehensionTable["0", "both"], 
+                 " (", format(study1b_comprehensionTable["0", "both"] / 
+                                sum(study1b_comprehensionTable[, "both"])*100, digits=2), 
+                 "%)", sep=""), 
+           paste(study1b_comprehensionTable["1", "both"], 
+                 " (", format(study1b_comprehensionTable["1", "both"] 
+                              / sum(study1b_comprehensionTable[, "both"])*100, digits=2), 
+                 "%)", sep=""), 
+           paste(study1b_comprehensionTable["2", "both"], 
+                 " (", format(study1b_comprehensionTable["2", "both"] 
+                              / sum(study1b_comprehensionTable[, "both"])*100, digits=2), 
+                 "%)", sep=""),
+           "---", sum(study1b_comprehensionTable[, "both"])),
+  AudioOnly = c("-", 
+                paste(study1b_comprehensionTable["0", "audioOnly"], 
+                      " (", format(study1b_comprehensionTable["0", "audioOnly"] 
+                                   / sum(study1b_comprehensionTable[, "audioOnly"])*100, digits=2), 
+                      "%)", sep=""), 
+                paste(study1b_comprehensionTable["1", "audioOnly"], 
+                      " (", format(study1b_comprehensionTable["1", "audioOnly"] 
+                                   / sum(study1b_comprehensionTable[, "audioOnly"])*100, digits=2), 
+                      "%)", sep=""), 
+                paste(study1b_comprehensionTable["2", "audioOnly"], 
+                      " (", format(study1b_comprehensionTable["2", "audioOnly"] 
+                                   / sum(study1b_comprehensionTable[, "audioOnly"])*100, digits=2), 
+                      "%)", sep=""),
+                "---", sum(study1b_comprehensionTable[, "audioOnly"])),
+  VideoOnly = c(paste(study1b_comprehensionTable["0", "videoOnly"], 
+                      " (", format(study1b_comprehensionTable["0", "videoOnly"] 
+                                   / sum(study1b_comprehensionTable[, "videoOnly"])*100, digits=2), 
+                      "%)", sep=""), 
+                "0", 
+                paste(study1b_comprehensionTable["1", "videoOnly"]), 
+                paste(study1b_comprehensionTable["2", "videoOnly"]),
+                "---", sum(study1b_comprehensionTable[, "videoOnly"]))
+)
+
+
+pander(study1b_comprehensionCheckDataFrame)
+```
+
+
+Next, we sum, for each participant, across the 10 comprehension check questions that they saw:
+
+```{r study1b-comprehension-part2, echo=FALSE, message=FALSE, warning=FALSE, results='as.is', eval=TRUE}
+d_study1b_wide$totalAttentionChecks = rowSums(d_study1b_wide[,
+     c("comprehensionCheckQ1Correct.1", 
+       "comprehensionCheckQ1Correct.2", 
+       "comprehensionCheckQ1Correct.3",
+       "comprehensionCheckQ1Correct.4", 
+       "comprehensionCheckQ1Correct.5", 
+       "comprehensionCheckQ1Correct.6",
+       "comprehensionCheckQ1Correct.7",
+       "comprehensionCheckQ1Correct.8",
+       "comprehensionCheckQ2Correct.1", 
+       "comprehensionCheckQ2Correct.2", 
+       "comprehensionCheckQ2Correct.3",
+       "comprehensionCheckQ2Correct.4", 
+       "comprehensionCheckQ2Correct.5", 
+       "comprehensionCheckQ2Correct.6",
+       "comprehensionCheckQ2Correct.7", 
+       "comprehensionCheckQ2Correct.8" )], na.rm=T)
+
+pander(rbind(c("Number of participants", 
+               format(table(d_study1b_wide$totalAttentionChecks), digits=2)),
+             c("Percentage", format(table(d_study1b_wide$totalAttentionChecks)*100 /
+               sum(table(d_study1b_wide$totalAttentionChecks)), digits=2))), split.table=120)
+
+d_study1b_exclusion = unique(append(as.character(d_study1b_exclusion),
+    as.character(d_study1b_wide$participantID[d_study1b_wide$totalAttentionChecks/10*100 < 
+                                   STUDY_1B_COMPREHENSION_PERCENTAGE_EXCLUSION])  ))
+
+study1b_NUM_EXCLUDED_FOR_ATTENTION = length(d_study1b_exclusion) - study1b_NUM_EXCLUDED_FOR_REPEATED
+study1b_PERCENTAGE_EXCLUDED_FOR_ATTENTION = study1b_NUM_EXCLUDED_FOR_ATTENTION / nrow(d_study1b_wide) * 100
+```
+
+
+Thus, we see that `r sum(table(d_study1b_wide$totalAttentionChecks)[c("8","9","10")])`, (`r format(sum(table(d_study1b_wide$totalAttentionChecks)[c("8","9","10")])/sum(table(d_study1b_wide$totalAttentionChecks))*100, digits=4)`%) participants answered 8 or more attention check questions correct out of 10.   
+    
+    
+- Exclusion Criteria 2: **`r study1b_NUM_EXCLUDED_FOR_ATTENTION` (`r format(study1b_PERCENTAGE_EXCLUDED_FOR_ATTENTION, digits=2)`%)** failed to meet `r STUDY_1B_COMPREHENSION_PERCENTAGE_EXCLUSION`% correct on 10 comprehension check questions
+    
+
+```{r study1b-apply-exclusion-critera, message=FALSE, echo=FALSE, eval=TRUE}
+d_study1b_wide <- d_study1b_wide %>% filter(!(participantID %in% d_study1b_exclusion))
+```
+
+
+- Final Number of participants: **`r nrow(d_study1b_wide)`**
+- Number of trials: `r study1b_NUM_TRIALS`
+- Number of videos: `r length(study1b_videoIDs)` videos x `r length(study1b_conditionList)` conditions: `r study1b_conditionList`
+- Age: Mean = `r format(mean(d_study1b_wide$age, na.rm=T), digits=3)`, SD = `r format(sd(d_study1b_wide$age, na.rm=T), digits=3)`
+- Gender (`r sum(is.na(d_study1b_wide$gender))` not reported): 
+`r pander(table(d_study1b_wide$gender))`
+- Race (`r sum(is.na(d_study1b_wide$race))` not reported):
+`r pander(table(d_study1b_wide$race), split.table=120)`
+
+
+```{r study1b-read-in-EA-ratings-dplyr, message=FALSE, echo=FALSE, eval=TRUE}
+# This chunk reads in the ratings that participants made while watching the videos.
+
+# initializing the data frames that we will populate
+d_study1b_dAllsum = data.frame()
+d_study1b_dAllmelt = data.frame()
+d_study1b_dAllTarget = data.frame()
+
+### Here, we make a loop to go over all the videoIDs in order to read the necessary data into the data frames
+
+keeping_track_of_all_exclusions_1b = data.frame()
+
+for(videoIterator in c(1:length(study1b_videoIDs))) { # loop over videoIDs
+  if(videoIterator %% 10 == 0) {
+    cat(paste("currently on video", videoIterator, "out of", length(study1b_videoIDs), "...\n"))
+  }
+  
+  thisVideoID = study1b_videoIDs[videoIterator]
+
+  ### -- START: reading in target ratings -- ###
+  targetFilenameToRead = paste(study1a_datafolder, "target/target_", thisVideoID, ".csv", sep="")
+  dTargetFine = read.csv(targetFilenameToRead, header=T) %>% mutate(videoID = thisVideoID)   # this has ratings every 0.5s
+
+  ### -- START: averaging target ratings over NUMBER_OF_WINDOWS_TO_AVERAGE_OVER -- ###
+  dTargetCoarse = dTargetFine[1:ceiling(nrow(dTargetFine)/NUMBER_OF_WINDOWS_TO_AVERAGE_OVER), ]
+  for(coarseningCounter in c(1:nrow(dTargetCoarse))) {
+    startingIndex = (coarseningCounter-1)*NUMBER_OF_WINDOWS_TO_AVERAGE_OVER +1
+    endingIndex = min(startingIndex+NUMBER_OF_WINDOWS_TO_AVERAGE_OVER-1, nrow(dTargetFine))
+    thisTargetSubset = dTargetFine[startingIndex:endingIndex, ]
+    #dTargetCoarse$time[coarseningCounter] = mean(thisTargetSubset$time, na.rm=T)
+    dTargetCoarse$rating[coarseningCounter] = mean(thisTargetSubset$rating, na.rm=T)
+
+    # This line is to fix the "time" values to nice multiples
+    dTargetCoarse$time[coarseningCounter] = coarseningCounter*NUMBER_OF_WINDOWS_TO_AVERAGE_OVER/2
+  }
+  # we put this rbind below, to make sure the target and observer data have the same times
+  # d_study1b_dAllTarget = rbind(d_study1b_dAllTarget, dTargetCoarse)
+  
+  ### -- END: averaging target ratings over NUMBER_OF_WINDOWS_TO_AVERAGE_OVER -- ###
+  ### -- END: reading in target ratings -- ###
+  
+  ### -- START: reading in observer ratings -- ###
+  
+  for(conditionIterator in c(1:length(study1b_conditionList))) {
+    thisCondition = study1b_conditionList[conditionIterator]
+    filenameToRead = paste(study1b_datafolder, "valence_ratings/ID", 
+                           substr(thisVideoID, 1, 3), "_vid", substr(thisVideoID, 5, 5), 
+                           "_crop_downsized_", thisCondition, ".csv", sep="")
+    dObserversFine = read.csv.TRANSPOSE(filenameToRead, header=T)
+    colnames(dObserversFine)[1] = "time"
+    dObserversFine = dObserversFine[, !(colnames(dObserversFine) %in% d_study1b_exclusion)]
+    
+    ### -- START: averaging target ratings over NUMBER_OF_WINDOWS_TO_AVERAGE_OVER -- ###
+    dObserversCoarse = dObserversFine[1:(ceiling(nrow(dObserversFine)/NUMBER_OF_WINDOWS_TO_AVERAGE_OVER)),]
+    for(coarseningCounter in c(1:nrow(dObserversCoarse))) {
+      startingIndex = (coarseningCounter-1)*NUMBER_OF_WINDOWS_TO_AVERAGE_OVER +1
+      endingIndex = min(startingIndex+NUMBER_OF_WINDOWS_TO_AVERAGE_OVER-1, nrow(dObserversFine))
+      
+      thisSubset = dObserversFine[startingIndex:endingIndex, ]
+      dObserversCoarse[coarseningCounter,] = colMeans(thisSubset[,], na.rm=T)
+      
+      # This line is to fix the "time" values to nice multiples
+      dObserversCoarse$time[coarseningCounter] = coarseningCounter*(NUMBER_OF_WINDOWS_TO_AVERAGE_OVER/2)
+    }
+    
+      # calculating number of changes, and removing those who make less than 
+      # NUM_RATING_CHANGES_PER_MINUTE_EXCLUSION_THRESHOLD changes per minute
+      numChanges = colSums((dObserversCoarse[2:nrow(dObserversCoarse),] - dObserversCoarse[1:(nrow(dObserversCoarse)-1),])!=0)
+      numChangesPerMinute = numChanges[2:length(numChanges)] / (nrow(dObserversCoarse) * (NUMBER_OF_WINDOWS_TO_AVERAGE_OVER/2) / 60)
+      
+      thisSubsetExclude = names(which(numChangesPerMinute < NUM_RATING_CHANGES_PER_MINUTE_EXCLUSION_THRESHOLD))
+      
+      if(length(thisSubsetExclude)>1) {
+        keeping_track_of_all_exclusions_1b = bind_rows(keeping_track_of_all_exclusions_1b, 
+                                                    data.frame(participantID = thisSubsetExclude,
+                                                               videoID = thisVideoID,
+                                                               condition = thisCondition))    
+      }
+      
+      dObserversCoarse <- dObserversCoarse[,!(colnames(dObserversCoarse) %in% thisSubsetExclude)]
+    
+    dObserversCoarse <- dObserversCoarse %>% mutate(videoID = thisVideoID, condition = thisCondition)
+    
+    dObserversMelt <- dObserversCoarse %>% 
+      pivot_longer(cols = -c(condition, videoID, time), names_to = "participantID", values_to = "rating") %>% arrange(condition, videoID, participantID, time)
+    
+
+    # ensuring that observers and target have the same number of timestamps (i.e., truncating the longer one)
+    if(conditionIterator==1) {
+      thisTimeMax = min(nrow(dObserversCoarse), nrow(dTargetCoarse))
+      dObserversMeltBound = dObserversMelt %>% filter(time <= dTargetCoarse$time[thisTimeMax])
+    } else {
+      thisTimeMax = min(nrow(dObserversCoarse), thisTimeMax)
+      dObserversMeltBound = rbind(dObserversMeltBound, dObserversMelt) %>% 
+        filter(time <= dTargetCoarse$time[thisTimeMax])
+    }
+    
+  }
+  dTargetCoarse = dTargetCoarse[1:thisTimeMax, ]
+  
+  dObserversSum <- dObserversMeltBound %>% group_by(condition, videoID, time) %>% 
+    summarise(mean_rating = mean(rating, na.rm=T),
+              N = n(),
+              sd = sd(rating, na.rm=T),
+              .groups = 'drop') %>% rename(rating = mean_rating)
+  
+  d_study1b_dAllmelt = bind_rows(d_study1b_dAllmelt, dObserversMeltBound)
+  d_study1b_dAllsum = bind_rows(d_study1b_dAllsum, dObserversSum)
+  
+  d_study1b_dAllTarget = bind_rows(d_study1b_dAllTarget, dTargetCoarse)
+}
+
+
+
+
+cat(paste("With a threshold of ", NUM_RATING_CHANGES_PER_MINUTE_EXCLUSION_THRESHOLD, " changes per minute,\n"))
+
+cat(paste("Discarded ", nrow(keeping_track_of_all_exclusions_1b), " trials from ", length(unique(keeping_track_of_all_exclusions_1b$participantID)), " participants...\n"))
+
+cat(paste("Dataset has ", length(unique(d_study1b_dAllmelt$participantID)), " participants remaining, from ", length(unique(d_study1b_wide$participantID)), " participants...\n"))
+
+
+# anonymizing. have to do it here because comprehension check data is in a separate file that still needs original participantIDs, and because the individual rating files also have the participantIDs
+d_study1b_wide <- d_study1b_wide %>%
+  # anonymizing the participantID by using an MD5 hash function, and taking first 8 chars
+  rowwise() %>% mutate(
+    participantID = substr(digest(participantID, algo="md5", serialize=F), 1, 8)
+  ) %>% ungroup()
+
+d_study1b_dAllmelt <- d_study1b_dAllmelt %>%
+  # anonymizing the participantID by using an MD5 hash function, and taking first 8 chars
+  rowwise() %>% mutate(
+    participantID = substr(digest(participantID, algo="md5", serialize=F), 1, 8)
+  ) %>% ungroup()
+
+write.csv(d_study1b_dAllsum, "data/study1b_dAllsum.csv", row.names=FALSE)
+write.csv(d_study1b_dAllmelt, "data/study1b_dAllmelt.csv", row.names=FALSE)
+write.csv(d_study1b_dAllTarget, "data/study1b_dAllTarget.csv", row.names=FALSE)
+```
+
+
+```{r study1b-calculate-empathic-accuracy, echo=FALSE, warning=FALSE, eval=TRUE}
+# This chunk calculates empathic accuracy 
+d_study1b_long = data.frame(
+  participantID = rep(d_study1b_wide$participantID, study1b_NUM_TRIALS),
+  videoID = c(as.character(d_study1b_wide$sequence.1), 
+              as.character(d_study1b_wide$sequence.2),
+              as.character(d_study1b_wide$sequence.3), 
+              as.character(d_study1b_wide$sequence.4),
+              as.character(d_study1b_wide$sequence.5),
+              as.character(d_study1b_wide$sequence.6),
+              as.character(d_study1b_wide$sequence.7),
+              as.character(d_study1b_wide$sequence.8)),
+  order = rep(c(1,2,3,4,5,6,7,8), each=nrow(d_study1b_wide)),
+  condition = c(as.character(d_study1b_wide$condition.1), 
+                as.character(d_study1b_wide$condition.2),
+                as.character(d_study1b_wide$condition.3), 
+                as.character(d_study1b_wide$condition.4),
+                as.character(d_study1b_wide$condition.5),
+                as.character(d_study1b_wide$condition.6),
+                as.character(d_study1b_wide$condition.7),
+                as.character(d_study1b_wide$condition.8)),
+  comprehensionCheckQ1Correct = c(d_study1b_wide$comprehensionCheckQ1Correct.1,
+                                  d_study1b_wide$comprehensionCheckQ1Correct.2,
+                                  d_study1b_wide$comprehensionCheckQ1Correct.3,
+                                  d_study1b_wide$comprehensionCheckQ1Correct.4,
+                                  d_study1b_wide$comprehensionCheckQ1Correct.5,
+                                  d_study1b_wide$comprehensionCheckQ1Correct.6,
+                                  d_study1b_wide$comprehensionCheckQ1Correct.7,
+                                  d_study1b_wide$comprehensionCheckQ1Correct.8),
+  comprehensionCheckQ2Correct = c(d_study1b_wide$comprehensionCheckQ2Correct.1,
+                                  d_study1b_wide$comprehensionCheckQ2Correct.2,
+                                  d_study1b_wide$comprehensionCheckQ2Correct.3,
+                                  d_study1b_wide$comprehensionCheckQ2Correct.4,
+                                  d_study1b_wide$comprehensionCheckQ2Correct.5,
+                                  d_study1b_wide$comprehensionCheckQ2Correct.6,
+                                  d_study1b_wide$comprehensionCheckQ2Correct.7,
+                                  d_study1b_wide$comprehensionCheckQ2Correct.8))
+d_study1b_long$participantID = as.character(d_study1b_long$participantID)
+d_study1b_long$videoID = as.character(d_study1b_long$videoID)
+d_study1b_long$accuracy = NA
+
+for(thisRow in c(1:nrow(d_study1b_long))) {
+    if(thisRow %% 100 == 0) {
+      cat(paste("currently on row", thisRow, "out of", nrow(d_study1b_long), "...\n"))
+    }
+  
+    thisParticipantID = d_study1b_long$participantID[thisRow]
+    thisVideoID = d_study1b_long$videoID[thisRow]
+    
+    thisSubset = d_study1b_dAllmelt %>% 
+      filter(participantID==thisParticipantID,
+             videoID==thisVideoID)
+    thisTargetSubset = d_study1b_dAllTarget %>% filter(videoID==thisVideoID)
+    
+    if(length(thisSubset$rating)>0) {
+      d_study1b_long$accuracy[thisRow] = cor(thisTargetSubset$rating, thisSubset$rating, use="complete")
+      
+      # adding in comprehension checks
+      filenameToRead = paste(study1b_datafolder, "comp_result/ID", 
+                             substr(thisVideoID, 1, 3), "_vid", substr(thisVideoID, 5, 5), 
+                             "_crop_downsized_", thisSubset$condition[1], ".csv", sep="")
+      if(!file.exists(filenameToRead)) {
+        filenameToRead = gsub('\\_crop', '', filenameToRead)
+      }
+      dCompreCheck = read.csv(filenameToRead, header=T)
+      dCompreCheck$worker_id = gsub('\\"', '', as.character(dCompreCheck$worker_id))
+      if(thisParticipantID %in% dCompreCheck$worker_id) {
+        whichCompreCheckRow = which(dCompreCheck$worker_id == thisParticipantID)
+        d_study1b_long$comprehensionCheckQ1Correct[thisRow] =
+          (as.character(dCompreCheck$Q1.Responce[whichCompreCheckRow]) ==
+             as.character(dCompreCheck$Q1.AnswerKey[whichCompreCheckRow]))
+        d_study1b_long$comprehensionCheckQ2Correct[thisRow] = 
+          (as.character(dCompreCheck$Q2.Responce[whichCompreCheckRow]) ==
+             as.character(dCompreCheck$Q2.AnswerKey[whichCompreCheckRow]))
+      }
+    }
+}
+
+d_study1b_long$comprehensionCheckQ1Correct[d_study1b_long$condition=="videoOnly"] = NA
+d_study1b_long$comprehensionCheckQ2Correct[d_study1b_long$condition=="videoOnly"] = NA
+
+d_study1b_long$IRI_EC = rep(d_study1b_wide$IRI_EC, study1b_NUM_TRIALS)
+d_study1b_long$IRI_PT = rep(d_study1b_wide$IRI_PT, study1b_NUM_TRIALS)
+d_study1b_long$IRI_PD = rep(d_study1b_wide$IRI_PD, study1b_NUM_TRIALS)
+#d_study1b_long$BDI = rep(d_study1b_wide$BDI, study1b_NUM_TRIALS)
+d_study1b_long$LT_Empathy = rep(d_study1b_wide$LTE, study1b_NUM_TRIALS)
+d_study1b_long$SPS = rep(d_study1b_wide$SPS, study1b_NUM_TRIALS)
+d_study1b_long$SIAS = rep(d_study1b_wide$SIAS, study1b_NUM_TRIALS)
+#d_study1b_long$HPS = rep(d_study1b_wide$HPS, study1b_NUM_TRIALS)
+d_study1b_long$gender = rep(d_study1b_wide$gender, study1b_NUM_TRIALS)
+d_study1b_long$age = rep(d_study1b_wide$age, study1b_NUM_TRIALS)
+
+
+d_study1b_long = d_study1b_long %>% filter(!is.na(accuracy))
+
+write.csv(d_study1b_long, "data/study1b_long.csv", row.names=FALSE)
+```
+
+
+
+## Study 2 Hebrew-speaking participants watching Hebrew Videos
+
+
+```{r studyHeb-full-read-in-EA-ratings, echo=FALSE, eval=TRUE}
+# This chunk reads in the ratings that participants made while watching the videos.
+
+# initializing the data frames that we will populate
+d_studyHeb_dAllsum = data.frame()
+d_studyHeb_dAllmelt = data.frame()
+d_studyHeb_dAllTarget = data.frame()
+
+for(videoIterator in c(1:length(studyHeb_videoIDs))) { # loop over studyHeb_videoIDs
+  if(videoIterator %% 10 == 0) {
+    cat(paste("Currently on video", videoIterator, "out of", length(studyHeb_videoIDs), "...\n"))
+  }
+  
+  thisVideoID = studyHeb_videoIDs[videoIterator]
+  
+  filenameToRead = paste(studyHeb_datafolder, "observers_raw_rating_", thisVideoID, ".csv", sep="")
+  dObserversFine = read.csv(filenameToRead, header=T)
+  colnames(dObserversFine)[1] = "target"
+  
+  if(thisVideoID=="053v2") {
+    # for the first file, remove the ratings at the end. for some reason the target ratings are > 300
+    dObserversFine <- dObserversFine %>% filter(target<101)
+  }
+  
+  ### -- START: averaging target ratings over NUMBER_OF_WINDOWS_TO_AVERAGE_OVER -- ###
+  dObserversCoarse = dObserversFine[1:(ceiling(nrow(dObserversFine)/NUMBER_OF_WINDOWS_TO_AVERAGE_OVER)),]
+  for(coarseningCounter in c(1:nrow(dObserversCoarse))) {
+    startingIndex = (coarseningCounter-1)*NUMBER_OF_WINDOWS_TO_AVERAGE_OVER +1
+    endingIndex = min(startingIndex+NUMBER_OF_WINDOWS_TO_AVERAGE_OVER-1, nrow(dObserversFine))
+    
+    thisSubset = dObserversFine[startingIndex:endingIndex, ]
+    dObserversCoarse[coarseningCounter,] = colMeans(thisSubset[,], na.rm=T)
+  }
+  dObserversCoarse = dObserversCoarse %>% mutate(
+    time = (1:nrow(dObserversCoarse)) *(NUMBER_OF_WINDOWS_TO_AVERAGE_OVER/2)
+  ) %>% relocate(time)
+  
+  # # calculating number of changes, and removing those who make less than 
+  # # NUM_RATING_CHANGES_PER_MINUTE_EXCLUSION_THRESHOLD changes per minute
+  # numChanges = colSums((dObserversCoarse[2:nrow(dObserversCoarse),] - dObserversCoarse[1:(nrow(dObserversCoarse)-1),])!=0)
+  # numChangesPerMinute = numChanges[2:length(numChanges)] / (nrow(dObserversCoarse) * (NUMBER_OF_WINDOWS_TO_AVERAGE_OVER/2) / 60)
+  # 
+  # thisSubsetExclude = names(which(numChangesPerMinute < NUM_RATING_CHANGES_PER_MINUTE_EXCLUSION_THRESHOLD))
+  #
+  # dObserversCoarse <- dObserversCoarse[,!(colnames(dObserversCoarse) %in% thisSubsetExclude)]
+  
+  
+  dObserversCoarse_FULL <- dObserversCoarse %>% select(time, starts_with("Full")) %>%
+    rename_with(~(gsub("Full_", "", .x, fixed = TRUE))) %>%
+    mutate(condition = "both", videoID = thisVideoID)
+  
+  dObserversCoarse_AUDIO <- dObserversCoarse %>% select(time, starts_with("AO")) %>%
+    rename_with(~(gsub("AO_", "", .x, fixed = TRUE))) %>%
+    mutate(condition = "audioOnly", videoID = thisVideoID)
+  
+  dObserversCoarse_VIDEO <- dObserversCoarse %>% select(time, starts_with("VO")) %>%
+    rename_with(~(gsub("VO_", "", .x, fixed = TRUE))) %>%
+    mutate(condition = "videoOnly", videoID = thisVideoID)
+  
+  dObserversMelt <- bind_rows(
+    (dObserversCoarse_FULL %>% 
+       pivot_longer(cols = -c(condition, videoID, time), names_to = "participantID", values_to = "rating") %>% arrange(condition, videoID, participantID, time)
+    ),
+    (dObserversCoarse_AUDIO %>% 
+       pivot_longer(cols = -c(condition, videoID, time), names_to = "participantID", values_to = "rating") %>% arrange(condition, videoID, participantID, time)
+    ),
+    (dObserversCoarse_VIDEO %>% 
+       pivot_longer(cols = -c(condition, videoID, time), names_to = "participantID", values_to = "rating") %>% arrange(condition, videoID, participantID, time)
+    )
+  ) %>% select(time, videoID, condition, participantID, rating)
+  
+  #   # ensuring that observers and target have the same number of timestamps (i.e., truncating the longer one)
+  #   if(conditionIterator==1) {
+  #     thisTimeMax = min(nrow(dObserversCoarse), nrow(dTargetCoarse))
+  #     dObserversMeltBound = dObserversMelt %>% filter(time <= dTargetCoarse$time[thisTimeMax])
+  #   } else {
+  #     thisTimeMax = min(nrow(dObserversCoarse), thisTimeMax)
+  #     dObserversMeltBound = rbind(dObserversMeltBound, dObserversMelt) %>% 
+  #       filter(time <= dTargetCoarse$time[thisTimeMax])
+  #   }
+  #   
+  # }
+  dTargetCoarse = dObserversCoarse %>% mutate(videoID = thisVideoID) %>%
+    select(videoID, time, target) %>% rename(rating = target)
+  
+  dObserversSum <- dObserversMelt %>% group_by(condition, videoID, time) %>% 
+    summarise(mean_rating = mean(rating, na.rm=T),
+              N = n(),
+              sd = sd(rating, na.rm=T),
+              .groups = 'drop') %>% rename(rating = mean_rating)
+  
+  d_studyHeb_dAllmelt = bind_rows(d_studyHeb_dAllmelt, dObserversMelt)
+  d_studyHeb_dAllsum = bind_rows(d_studyHeb_dAllsum, dObserversSum)
+  d_studyHeb_dAllTarget = bind_rows(d_studyHeb_dAllTarget, dTargetCoarse)
+}
+
+write.csv(d_studyHeb_dAllsum, "data/studyHeb_dAllsum.csv", row.names=FALSE)
+write.csv(d_studyHeb_dAllmelt, "data/studyHeb_dAllmelt.csv", row.names=FALSE)
+write.csv(d_studyHeb_dAllTarget, "data/studyHeb_dAllTarget.csv", row.names=FALSE)
+```
+
+
+### Study 2 Description
+
+Study 2 (Jospe et al., 2020): Hebrew-speaking participants watched videos of targets speaking in Hebrew (this is a replication of 1a/1b in a different culture/language). Same 3 (both =video+audio, audio-only and video-only) conditions as in Study 1a/1b.
+
+***
+
+```{r studyHeb-read-in-data, message=FALSE, echo=FALSE, eval=TRUE}
+d_studyHeb_wide = read.csv("data/studyHeb_dAllmelt.csv", header=TRUE) %>% 
+  filter(time==2) %>% select(-time, -rating) %>% 
+  pivot_wider(names_from = videoID, values_from = condition)
+```
+
+### Study 2 Recruitment Statistics
+
+- Number of participants: **`r nrow(d_studyHeb_wide)`**
+- Number of trials: `r studyHeb_NUM_TRIALS`
+- Number of videos: `r length(studyHeb_videoIDs)` videos x `r length(studyHeb_conditionList)` conditions: `r studyHeb_conditionList`
+
+
+```{r studyHeb-calculate-empathic-accuracy, echo=FALSE, eval=TRUE}
+# This chunk calculates empathic accuracy 
+# preparing a data frame with the right "size" to store the EA values:
+d_studyHeb_long = read.csv("data/studyHeb_dAllmelt.csv", header=TRUE) %>% 
+  filter(time==2) %>% select(-time, -rating) %>% mutate(
+    accuracy = NA
+  ) %>% select(participantID, videoID, condition, accuracy)
+
+for(thisRow in c(1:nrow(d_studyHeb_long))) {
+  if(thisRow %% 100 == 0) {
+    cat(paste("currently on row", thisRow, "out of", nrow(d_studyHeb_long), "...\n"))
+  }
+  # getting the participantID, videoID, condition
+  thisParticipantID = d_studyHeb_long$participantID[thisRow]
+  thisVideoID = d_studyHeb_long$videoID[thisRow]
+  
+  # isolating the observer subset (this particular observer)
+  thisSubset = subset(d_studyHeb_dAllmelt, d_studyHeb_dAllmelt$participantID==thisParticipantID &
+                        d_studyHeb_dAllmelt$videoID==thisVideoID)
+  # isolating the subset that holds the mean ratings for that video
+  thisTargetSubset = subset(d_studyHeb_dAllTarget, d_studyHeb_dAllTarget$videoID==thisVideoID)
+  
+  if(length(thisSubset$rating)>0) {
+      # actually calculating the measures
+      d_studyHeb_long$accuracy[thisRow] = cor(thisTargetSubset$rating, thisSubset$rating, use="complete")
+  }
+}
+
+write.csv(d_studyHeb_long, "data/studyHeb_long.csv", row.names=FALSE)
+```
+
+
+
+
+
+## Study 3 Americans watching Hebrew Videos
+
+### Study 3 Description
+
+In Study 3, we recruited American participants to watch videos of targets speaking in Hebrew. We had the same 3 (both video+audio, audio-only and video-only) conditions as in Study 1a/1b/2.
+
+***
+
+```{r studyAmHeb-read-in-data, message=FALSE, echo=FALSE, eval=TRUE}
+d_studyAmHeb_wide = read.csv(studyAmHeb_indivFilename, header=TRUE) %>%
+  rename(participantID = worker_id) %>%
+  mutate(sequence.1 = NA,
+         sequence.2 = NA,
+         sequence.3 = NA)
+
+d_studyAmHeb_wide[,c("sequence.1", "sequence.2", "sequence.3")] <-
+  do.call(rbind, lapply(strsplit(as.character(d_studyAmHeb_wide$videoClips), ','), 
+      function(x) {return(gsub("\\[| \\'|\\'|\\]", "" ,  gsub('\\_Full.mp4', '', x)))}
+  ))
+
+# # for demographic reporting:
+# table(addNA(subset(d_studyAmHeb_wide, d_studyAmHeb_wide$ethnicity=="notHispanic")$race), addNA(subset(d_studyAmHeb_wide, d_studyAmHeb_wide$ethnicity=="notHispanic")$gender))
+# table(addNA(subset(d_studyAmHeb_wide, d_studyAmHeb_wide$ethnicity=="hispanic")$race), addNA(subset(d_studyAmHeb_wide, d_studyAmHeb_wide$ethnicity=="hispanic")$gender))
+# table(addNA(subset(d_studyAmHeb_wide, is.na(d_studyAmHeb_wide$ethnicity))$race), addNA(subset(d_studyAmHeb_wide, is.na(d_studyAmHeb_wide$ethnicity))$gender))
+
+# # drop duplicated IDs and drop people who understand Hebrew
+# starting: 225
+# 10 people took it twice for a total of 20 duped observations.
+# drop duplicated IDs 
+d_studyAmHeb_exclusion = as.character(d_studyAmHeb_wide$participantID[duplicated(d_studyAmHeb_wide$participantID)])
+studyAmHeb_NUM_EXCLUDED_FOR_REPEATED = length(d_studyAmHeb_exclusion)
+
+# dropped 35 more people who understood hebrew for final sample size of 170
+d_studyAmHeb_exclusion = unique(append(
+  as.character(d_studyAmHeb_exclusion),
+  as.character(d_studyAmHeb_wide$participantID[d_studyAmHeb_wide$understandHebrew=="true"])))
+studyAmHeb_NUM_EXCLUDED_FOR_HEBREW = length(d_studyAmHeb_exclusion) - studyAmHeb_NUM_EXCLUDED_FOR_REPEATED
+```
+
+### Study 3 Recruitment Statistics
+
+- Initial Number of participants recruited: **`r nrow(d_studyAmHeb_wide)`** 
+    - **Exclusion Criteria 1**: Repeat participants. **`r studyAmHeb_NUM_EXCLUDED_FOR_REPEATED`** people took it twice.
+    - **Exclusion Criteria 2**: We excluded another **`r studyAmHeb_NUM_EXCLUDED_FOR_HEBREW`** people who understood Hebrew.
+    - These resulted in a total of `r length(which(d_studyAmHeb_wide$participantID %in% d_studyAmHeb_exclusion))` removed observations.
+    
+```{r studyAmHeb-apply-exclusion-critera, message=FALSE, echo=FALSE, eval=TRUE}
+d_studyAmHeb_wide <- d_studyAmHeb_wide %>% filter(!(participantID %in% d_studyAmHeb_exclusion))
+```
+
+
+- Final Number of participants: **`r nrow(d_studyAmHeb_wide)`**
+- Number of trials: `r studyAmHeb_NUM_TRIALS`
+- Number of videos: `r length(studyAmHeb_videoIDs)` videos x `r length(studyAmHeb_conditionList)` conditions: `r studyAmHeb_conditionList`
+- Age: Mean = `r format(mean(d_studyAmHeb_wide$age, na.rm=T), digits=3)`, SD = `r format(sd(d_studyAmHeb_wide$age, na.rm=T), digits=3)`
+- Gender: 
+`r pander(table(d_studyAmHeb_wide$gender))`
+- Race:
+`r pander(table(d_studyAmHeb_wide$race), split.table=120)`
+
+
+```{r studyAmHeb-read-in-EA-ratings, echo=FALSE, eval=TRUE}
+# This chunk reads in the ratings that participants made while watching the videos.
+
+# initializing the data frames that we will populate
+d_studyAmHeb_dAllsum = data.frame()
+d_studyAmHeb_dAllmelt = data.frame()
+d_studyAmHeb_dAllTarget = data.frame()
+
+for(videoIterator in c(1:length(studyAmHeb_videoIDs))) { # loop over studyAmHeb_videoIDs
+  
+  if(videoIterator %% 10 == 0) {
+    cat(paste("Currently on video", videoIterator, "out of", length(studyAmHeb_videoIDs), "...\n"))
+  }
+  
+  thisVideoID = studyAmHeb_videoIDs[videoIterator]
+
+  ### -- START: reading in target ratings -- ###
+  targetFilenameToRead = paste(studyAmHeb_datafolder, "targetData/", thisVideoID, "_ratings_round.csv", sep="")
+  dTargetFine = read.csv(targetFilenameToRead, header=T) %>% mutate(videoID = thisVideoID)   # this has ratings every 0.5s
+
+  ### -- START: averaging target ratings over NUMBER_OF_WINDOWS_TO_AVERAGE_OVER -- ###
+  dTargetCoarse = dTargetFine[1:ceiling(nrow(dTargetFine)/NUMBER_OF_WINDOWS_TO_AVERAGE_OVER), ]
+  for(coarseningCounter in c(1:nrow(dTargetCoarse))) {
+    startingIndex = (coarseningCounter-1)*NUMBER_OF_WINDOWS_TO_AVERAGE_OVER +1
+    endingIndex = min(startingIndex+NUMBER_OF_WINDOWS_TO_AVERAGE_OVER-1, nrow(dTargetFine))
+    thisTargetSubset = dTargetFine[startingIndex:endingIndex, ]
+    #dTargetCoarse$time[coarseningCounter] = mean(thisTargetSubset$time, na.rm=T)
+    dTargetCoarse$rating[coarseningCounter] = mean(thisTargetSubset$rating, na.rm=T)
+
+    # This line is to fix the "time" values to nice multiples
+    dTargetCoarse$time[coarseningCounter] = coarseningCounter*NUMBER_OF_WINDOWS_TO_AVERAGE_OVER/2
+  }
+  # we put this rbind below, to make sure the target and observer data have the same times
+  # d_studyAmHeb_dAllTarget = rbind(d_studyAmHeb_dAllTarget, dTargetCoarse)
+  
+  ### -- END: averaging target ratings over NUMBER_OF_WINDOWS_TO_AVERAGE_OVER -- ###
+  ### -- END: reading in target ratings -- ###
+  
+  ### -- START: reading in observer ratings -- ###
+  
+  for(conditionIterator in c(1:length(studyAmHeb_conditionList))) {
+    thisCondition = studyAmHeb_conditionList[conditionIterator]  
+  
+    filenameToRead = paste(studyAmHeb_datafolder, "val_ratings_result/", thisVideoID, "_Full_", thisCondition, ".csv", sep="")
+    dObserversFine = read.csv.TRANSPOSE(filenameToRead, header=T)
+    colnames(dObserversFine)[1] = "time"
+    dObserversFine = dObserversFine[, !(colnames(dObserversFine) %in% d_studyAmHeb_exclusion)]
+    
+    ### -- START: averaging target ratings over NUMBER_OF_WINDOWS_TO_AVERAGE_OVER -- ###
+    dObserversCoarse = dObserversFine[1:(ceiling(nrow(dObserversFine)/NUMBER_OF_WINDOWS_TO_AVERAGE_OVER)),]
+    for(coarseningCounter in c(1:nrow(dObserversCoarse))) {
+      startingIndex = (coarseningCounter-1)*NUMBER_OF_WINDOWS_TO_AVERAGE_OVER +1
+      endingIndex = min(startingIndex+NUMBER_OF_WINDOWS_TO_AVERAGE_OVER-1, nrow(dObserversFine))
+      
+      thisSubset = dObserversFine[startingIndex:endingIndex, ]
+      dObserversCoarse[coarseningCounter,] = colMeans(thisSubset[,], na.rm=T)
+      
+      # This line is to fix the "time" values to nice multiples
+      dObserversCoarse$time[coarseningCounter] = coarseningCounter*(NUMBER_OF_WINDOWS_TO_AVERAGE_OVER/2)
+    }
+    
+      # calculating number of changes, and removing those who make less than 
+      # NUM_RATING_CHANGES_PER_MINUTE_EXCLUSION_THRESHOLD changes per minute
+      numChanges = colSums((dObserversCoarse[2:nrow(dObserversCoarse),] - dObserversCoarse[1:(nrow(dObserversCoarse)-1),])!=0)
+      numChangesPerMinute = numChanges[2:length(numChanges)] / (nrow(dObserversCoarse) * (NUMBER_OF_WINDOWS_TO_AVERAGE_OVER/2) / 60)
+      
+      thisSubsetExclude = names(which(numChangesPerMinute < NUM_RATING_CHANGES_PER_MINUTE_EXCLUSION_THRESHOLD))
+      
+      dObserversCoarse <- dObserversCoarse[,!(colnames(dObserversCoarse) %in% thisSubsetExclude)]
+
+    dObserversCoarse <- dObserversCoarse %>% mutate(videoID = thisVideoID, condition = thisCondition)
+    
+    dObserversMelt <- dObserversCoarse %>% 
+      pivot_longer(cols = -c(condition, videoID, time), names_to = "participantID", values_to = "rating") %>% arrange(condition, videoID, participantID, time)
+    
+    # ensuring that observers and target have the same number of timestamps (i.e., truncating the longer one)
+    if(conditionIterator==1) {
+      thisTimeMax = min(nrow(dObserversCoarse), nrow(dTargetCoarse))
+      dObserversMeltBound = dObserversMelt %>% filter(time <= dTargetCoarse$time[thisTimeMax])
+    } else {
+      thisTimeMax = min(nrow(dObserversCoarse), thisTimeMax)
+      dObserversMeltBound = rbind(dObserversMeltBound, dObserversMelt) %>% 
+        filter(time <= dTargetCoarse$time[thisTimeMax])
+    }
+    
+  }
+  dTargetCoarse = dTargetCoarse[1:thisTimeMax, ]
+  
+  dObserversSum <- dObserversMeltBound %>% group_by(condition, videoID, time) %>% 
+    summarise(mean_rating = mean(rating, na.rm=T),
+              N = n(),
+              sd = sd(rating, na.rm=T),
+              .groups = 'drop') %>% rename(rating = mean_rating)
+  
+  d_studyAmHeb_dAllmelt = bind_rows(d_studyAmHeb_dAllmelt, dObserversMeltBound)
+  d_studyAmHeb_dAllsum = bind_rows(d_studyAmHeb_dAllsum, dObserversSum)
+  
+  d_studyAmHeb_dAllTarget = bind_rows(d_studyAmHeb_dAllTarget, dTargetCoarse)
+}
+
+
+
+# anonymizing. have to do it here because comprehension check data is in a separate file that still needs original participantIDs, and because the individual rating files also have the participantIDs
+d_studyAmHeb_wide <- d_studyAmHeb_wide %>%
+  # anonymizing the participantID by using an MD5 hash function, and taking first 8 chars
+  rowwise() %>% mutate(
+    participantID = substr(digest(participantID, algo="md5", serialize=F), 1, 8)
+  ) %>% ungroup()
+
+d_studyAmHeb_dAllmelt <- d_studyAmHeb_dAllmelt %>%
+  # anonymizing the participantID by using an MD5 hash function, and taking first 8 chars
+  rowwise() %>% mutate(
+    participantID = substr(digest(participantID, algo="md5", serialize=F), 1, 8)
+  ) %>% ungroup()
+
+write.csv(d_studyAmHeb_dAllsum, "data/studyAmHeb_dAllsum.csv", row.names=FALSE)
+write.csv(d_studyAmHeb_dAllmelt, "data/studyAmHeb_dAllmelt.csv", row.names=FALSE)
+write.csv(d_studyAmHeb_dAllTarget, "data/studyAmHeb_dAllTarget.csv", row.names=FALSE)
+```
+
+
+```{r studyAmHeb-calculate-empathic-accuracy, echo=FALSE, eval=TRUE}
+# This chunk calculates empathic accuracy
+d_studyAmHeb_long = data.frame(
+  participantID = rep(d_studyAmHeb_wide$participantID, studyAmHeb_NUM_TRIALS),
+  videoID = c(as.character(d_studyAmHeb_wide$sequence.1), 
+              as.character(d_studyAmHeb_wide$sequence.2),
+              as.character(d_studyAmHeb_wide$sequence.3)),
+  order = rep(c(1,2,3), each=nrow(d_studyAmHeb_wide)))
+d_studyAmHeb_long$participantID = as.character(d_studyAmHeb_long$participantID)
+d_studyAmHeb_long$videoID = as.character(d_studyAmHeb_long$videoID)
+d_studyAmHeb_long$condition = NA
+d_studyAmHeb_long$accuracy = NA
+
+for(thisRow in c(1:nrow(d_studyAmHeb_long))) {
+  if(thisRow %% 100 == 0) {
+    cat(paste("currently on row", thisRow, "out of", nrow(d_studyAmHeb_long), "...\n"))
+  }
+  # getting the participantID, videoID, condition
+  thisParticipantID = d_studyAmHeb_long$participantID[thisRow]
+  thisVideoID = d_studyAmHeb_long$videoID[thisRow]
+  
+  # isolating the observer subset (this particular observer)
+  thisSubset = subset(d_studyAmHeb_dAllmelt, d_studyAmHeb_dAllmelt$participantID==thisParticipantID &
+                        d_studyAmHeb_dAllmelt$videoID==thisVideoID)
+  # isolating the subset that holds the mean ratings for that video
+  thisTargetSubset = subset(d_studyAmHeb_dAllTarget, d_studyAmHeb_dAllTarget$videoID==thisVideoID)
+  d_studyAmHeb_long$condition[thisRow] = thisSubset$condition[1]
+  
+  if(length(thisSubset$rating)>0) {
+      # actually calculating the measures
+    d_studyAmHeb_long$accuracy[thisRow] = cor(thisTargetSubset$rating, thisSubset$rating, use="complete")
+  }
+}
+
+d_studyAmHeb_long$IRI_EC = rep(d_studyAmHeb_wide$IRI_EC, studyAmHeb_NUM_TRIALS)
+d_studyAmHeb_long$IRI_PT = rep(d_studyAmHeb_wide$IRI_PT, studyAmHeb_NUM_TRIALS)
+d_studyAmHeb_long$IRI_PD = rep(d_studyAmHeb_wide$IRI_PD, studyAmHeb_NUM_TRIALS)
+d_studyAmHeb_long$BDI = rep(d_studyAmHeb_wide$BDI, studyAmHeb_NUM_TRIALS)
+d_studyAmHeb_long$LT_Empathy = rep(d_studyAmHeb_wide$LT_Empathy, studyAmHeb_NUM_TRIALS)
+d_studyAmHeb_long$HPS = rep(d_studyAmHeb_wide$HPS, studyAmHeb_NUM_TRIALS)
+d_studyAmHeb_long$gender = rep(d_studyAmHeb_wide$gender, studyAmHeb_NUM_TRIALS)
+d_studyAmHeb_long$age = rep(d_studyAmHeb_wide$age, studyAmHeb_NUM_TRIALS)
+
+write.csv(d_studyAmHeb_long, "data/studyAmHeb_long.csv", row.names=FALSE)
+```
+
+
+
+
+
+
+
+
+
+
+
